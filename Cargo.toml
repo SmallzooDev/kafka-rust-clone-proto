@@ -1,0 +1,26 @@
+[package]
+name = "kafka-starter-rust"
+version = "0.1.0"
+authors = ["Codecrafters <hello@codecrafters.io>"]
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.75"
+bytes = "1.5.0"
+thiserror = "1.0.32"
+tokio = { version = "1.34.0", features = ["full"] }
+async-trait = "0.1.74"
+uuid = { version = "1.6.1", features = ["v4"] }
+tempfile = "3.10.0"
+hex = "0.4.3"
+
+[lib]
+name = "kafka_starter_rust"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codecrafters-kafka"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3.10.0"
