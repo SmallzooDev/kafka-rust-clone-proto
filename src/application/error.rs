@@ -2,6 +2,7 @@ use crate::domain::error::DomainError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum ApplicationError {
     #[error(transparent)]
     Domain(#[from] DomainError),
@@ -13,4 +14,5 @@ pub enum ApplicationError {
     NotFound(String),
 }
 
-pub type Result<T> = std::result::Result<T, ApplicationError>; 
+pub type Result<T> = std::result::Result<T, ApplicationError>;
+

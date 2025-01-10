@@ -4,6 +4,7 @@ pub const UNSUPPORTED_VERSION: i16 = 35;
 
 /// 현재 브로커가 지원하는 최대 API 버전
 /// ApiVersions 요청에 대한 응답에서 사용됨
+#[allow(dead_code)]
 pub const MAX_SUPPORTED_VERSION: i16 = 4;
 
 /// ApiVersions API의 키 값
@@ -14,7 +15,9 @@ pub const FETCH_KEY: i16 = 1;
 pub const PRODUCE_KEY: i16 = 0;
 
 /// Produce API 버전 범위
+#[allow(dead_code)]
 pub const PRODUCE_MIN_VERSION: i16 = 0;
+#[allow(dead_code)]
 pub const PRODUCE_MAX_VERSION: i16 = 9;
 
 /// DescribeTopicPartitions API의 키 값
@@ -23,8 +26,11 @@ pub const PRODUCE_MAX_VERSION: i16 = 9;
 pub const DESCRIBE_TOPIC_PARTITIONS_KEY: i16 = 75;
 
 /// DescribeTopicPartitions API는 버전 0만 지원
+#[allow(dead_code)]
 pub const DESCRIBE_TOPIC_PARTITIONS_MAX_VERSION: i16 = 0;
+#[allow(dead_code)]
 pub const DESCRIBE_TOPIC_PARTITIONS_MIN_VERSION: i16 = 0;
 
 /// Error codes
-pub const UNKNOWN_TOPIC_OR_PARTITION: i16 = 3; 
+pub const UNKNOWN_TOPIC_OR_PARTITION: i16 = 3;
+

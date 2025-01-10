@@ -41,7 +41,7 @@ struct Segment {
     base_offset: u64,
     files: SegmentFiles,
     buffer: MessageBuffer,
-    next_offset: u64,  // 다음에 할당할 오프셋
+    next_offset: u64, // 다음에 할당할 오프셋
 }
 
 impl Segment {
@@ -50,7 +50,7 @@ impl Segment {
             base_offset,
             files,
             buffer: MessageBuffer::new(base_offset),
-            next_offset: base_offset,  // 초기값은 base_offset
+            next_offset: base_offset, // 초기값은 base_offset
         }
     }
 
@@ -91,7 +91,7 @@ impl DiskMessageStore {
         let (flush_sender, flush_receiver) = mpsc::channel(100);
         let is_running = Arc::new(AtomicBool::new(true));
         let segments = Arc::new(RwLock::new(HashMap::new()));
-        
+
         // 플러시 작업을 처리할 백그라운드 태스크 시작
         let store = Self {
             log_dir,
@@ -100,13 +100,17 @@ impl DiskMessageStore {
             flush_sender,
             is_running: is_running.clone(),
         };
-        
+
         store.start_flush_task(flush_receiver, config.flush_interval);
-        
+
         store
     }
 
-    fn start_flush_task(&self, mut flush_receiver: mpsc::Receiver<FlushMessage>, interval_duration: Duration) {
+    fn start_flush_task(
+        &self,
+        mut flush_receiver: mpsc::Receiver<FlushMessage>,
+        interval_duration: Duration,
+    ) {
         let segments = self.segments.clone();
         let is_running = self.is_running.clone();
 
@@ -150,13 +154,19 @@ impl DiskMessageStore {
 
     fn get_segment_path(&self, topic_partition: &TopicPartition, base_offset: u64) -> PathBuf {
         self.log_dir
-            .join(format!("{}-{}", topic_partition.topic, topic_partition.partition))
+            .join(format!(
+                "{}-{}",
+                topic_partition.topic, topic_partition.partition
+            ))
             .join(format!("{:020}.log", base_offset))
     }
 
     fn get_index_path(&self, topic_partition: &TopicPartition, base_offset: u64) -> PathBuf {
         self.log_dir
-            .join(format!("{}-{}", topic_partition.topic, topic_partition.partition))
+            .join(format!(
+                "{}-{}",
+                topic_partition.topic, topic_partition.partition
+            ))
             .join(format!("{:020}.index", base_offset))
     }
 
@@ -172,20 +182,24 @@ impl DiskMessageStore {
         Ok(current_size >= self.config.max_segment_size)
     }
 
-    async fn roll_segment(&self, topic_partition: &TopicPartition, current_offset: u64) -> Result<Arc<RwLock<Segment>>> {
+    async fn roll_segment(
+        &self,
+        topic_partition: &TopicPartition,
+        current_offset: u64,
+    ) -> Result<Arc<RwLock<Segment>>> {
         let new_base_offset = current_offset + 1;
         let log_path = self.get_segment_path(topic_partition, new_base_offset);
         let index_path = self.get_index_path(topic_partition, new_base_offset);
-        
+
         self.ensure_directory_exists(&log_path).await?;
-        
+
         let log_file = OpenOptions::new()
             .read(true)
             .create(true)
             .append(true)
             .open(&log_path)
             .await?;
-            
+
         let index_file = OpenOptions::new()
             .read(true)
             .create(true)
@@ -216,17 +230,21 @@ impl DiskMessageStore {
         Ok(new_segment)
     }
 
-    async fn get_or_create_segment(&self, topic_partition: &TopicPartition, offset: u64) -> Result<Arc<RwLock<Segment>>> {
+    async fn get_or_create_segment(
+        &self,
+        topic_partition: &TopicPartition,
+        offset: u64,
+    ) -> Result<Arc<RwLock<Segment>>> {
         let base_offset = (offset / 1000) * 1000;
         let mut segments = self.segments.write().await;
-        
+
         if let Some(cache) = segments.get(topic_partition) {
             if let Some(segment) = cache.segments.get(&base_offset) {
                 // 세그먼트가 존재하면 크기 체크
                 let segment_guard = segment.read().await;
                 if self.should_roll_segment(&segment_guard).await? {
-                    drop(segment_guard);  // 락 해제
-                    drop(segments);       // 글로벌 락 해제
+                    drop(segment_guard); // 락 해제
+                    drop(segments); // 글로벌 락 해제
                     return self.roll_segment(topic_partition, offset).await;
                 }
                 return Ok(segment.clone());
@@ -236,16 +254,16 @@ impl DiskMessageStore {
         // 새 세그먼트 생성
         let log_path = self.get_segment_path(topic_partition, base_offset);
         let index_path = self.get_index_path(topic_partition, base_offset);
-        
+
         self.ensure_directory_exists(&log_path).await?;
-        
+
         let log_file = OpenOptions::new()
             .read(true)
             .create(true)
             .append(true)
             .open(&log_path)
             .await?;
-            
+
         let index_file = OpenOptions::new()
             .read(true)
             .create(true)
@@ -279,28 +297,28 @@ impl DiskMessageStore {
         println!("Offset: {}", message.offset);
 
         let mut buffer = BytesMut::new();
-        
+
         // 오프셋 (8바이트)
         buffer.put_i64(message.offset as i64);
-        
+
         // 메시지 크기를 위한 공간 예약 (4바이트)
         buffer.put_u32(0);
-        
+
         // CRC32 예약 (4바이트)
         buffer.put_u32(0);
-        
+
         // 매직 넘버 (1바이트)
         buffer.put_u8(1);
-        
+
         // 속성 (1바이트)
         buffer.put_u8(0);
-        
+
         // 타임스탬프 (8바이트)
         buffer.put_u64(message.timestamp);
-        
+
         // 키 (현재는 빈 키)
         buffer.put_i32(0);
-        
+
         // 값
         buffer.put_i32(message.payload.len() as i32);
         buffer.put_slice(&message.payload);
@@ -311,9 +329,9 @@ impl DiskMessageStore {
 
         println!("Message Size: {} bytes", message_size);
         println!("Total Buffer Size: {} bytes", buffer.len());
-        
+
         file.write_all(&buffer).await?;
-        
+
         Ok(position)
     }
 
@@ -338,16 +356,20 @@ impl DiskMessageStore {
             };
 
             let position = Self::write_message(&mut segment.files.log_file, &message).await?;
-            
+
             // 인덱스 엔트리 쓰기
             let relative_offset = offset - segment.base_offset;
             let index_entry = [
                 (relative_offset as u32).to_be_bytes(),
                 (position as u32).to_be_bytes(),
-            ].concat();
+            ]
+            .concat();
             segment.files.index_file.write_all(&index_entry).await?;
 
-            println!("Flushed Message - Offset: {}, Position: {}", offset, position);
+            println!(
+                "Flushed Message - Offset: {}, Position: {}",
+                offset, position
+            );
         }
 
         // 디스크 동기화
@@ -361,7 +383,7 @@ impl DiskMessageStore {
     async fn cleanup(&self) -> Result<()> {
         self.is_running.store(false, Ordering::SeqCst);
         let _ = self.flush_sender.send(FlushMessage::Shutdown).await;
-        
+
         // 마지막 플러시 수행
         let segments_guard = self.segments.read().await;
         for (_, cache) in segments_guard.iter() {
@@ -372,7 +394,7 @@ impl DiskMessageStore {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -392,22 +414,30 @@ impl MessageStore for DiskMessageStore {
         println!("\n=== Producer Request ===");
         println!("Topic: {}, Partition: {}", message.topic, message.partition);
         println!("Message Size: {} bytes", message.payload.len());
-        println!("Message Content: {:?}", String::from_utf8_lossy(&message.payload));
+        println!(
+            "Message Content: {:?}",
+            String::from_utf8_lossy(&message.payload)
+        );
 
-        let segment = self.get_or_create_segment(&TopicPartition {
-            topic: message.topic.clone(),
-            partition: message.partition,
-        }, message.offset).await?;
+        let segment = self
+            .get_or_create_segment(
+                &TopicPartition {
+                    topic: message.topic.clone(),
+                    partition: message.partition,
+                },
+                message.offset,
+            )
+            .await?;
         let mut segment = segment.write().await;
 
         // 새로운 오프셋 할당
         message.offset = segment.allocate_offset();
 
         // 메모리 버퍼에 추가
-        segment.buffer.messages.push((
-            message.offset,
-            Bytes::copy_from_slice(&message.payload),
-        ));
+        segment
+            .buffer
+            .messages
+            .push((message.offset, Bytes::copy_from_slice(&message.payload)));
 
         println!("\n=== Memory Buffer Status ===");
         println!("Buffer Size: {} messages", segment.buffer.messages.len());
@@ -423,14 +453,27 @@ impl MessageStore for DiskMessageStore {
         Ok(message.offset)
     }
 
-    async fn read_messages(&self, topic_id: &str, partition: i32, offset: i64) -> Result<Option<Vec<u8>>> {
+    async fn read_messages(
+        &self,
+        topic_id: &str,
+        partition: i32,
+        offset: i64,
+    ) -> Result<Option<Vec<u8>>> {
         println!("\n=== Reading Message ===");
-        println!("Topic: {}, Partition: {}, Offset: {}", topic_id, partition, offset);
+        println!(
+            "Topic: {}, Partition: {}, Offset: {}",
+            topic_id, partition, offset
+        );
 
-        let segment = self.get_or_create_segment(&TopicPartition {
-            topic: topic_id.to_string(),
-            partition,
-        }, offset as u64).await?;
+        let segment = self
+            .get_or_create_segment(
+                &TopicPartition {
+                    topic: topic_id.to_string(),
+                    partition,
+                },
+                offset as u64,
+            )
+            .await?;
         let segment = segment.read().await;
 
         // 먼저 메모리 버퍼에서 찾기
@@ -447,7 +490,10 @@ impl MessageStore for DiskMessageStore {
         println!("Checking Disk...");
         let base_offset = (offset as u64 / 1000) * 1000;
         let relative_offset = offset as u64 - base_offset;
-        println!("Base Offset: {}, Relative Offset: {}", base_offset, relative_offset);
+        println!(
+            "Base Offset: {}, Relative Offset: {}",
+            base_offset, relative_offset
+        );
 
         // 인덱스 파일을 처음부터 읽기
         let mut index_file = segment.files.index_file.try_clone().await?;
@@ -461,22 +507,22 @@ impl MessageStore for DiskMessageStore {
                     let idx_offset = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
                     let pos = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]);
                     println!("Index Entry - Offset: {}, Position: {}", idx_offset, pos);
-                    
+
                     if idx_offset as u64 >= relative_offset {
                         println!("Found matching index entry!");
                         // 찾은 위치에서 메시지 읽기
                         let mut log_file = segment.files.log_file.try_clone().await?;
                         log_file.seek(SeekFrom::Start(pos as u64)).await?;
-                        
+
                         let mut size_buf = [0u8; 4];
                         log_file.read_exact(&mut size_buf).await?;
                         let message_size = u32::from_be_bytes(size_buf);
                         println!("Message Size from Log: {} bytes", message_size);
-                        
+
                         let mut message_buf = vec![0u8; message_size as usize];
                         log_file.read_exact(&mut message_buf).await?;
                         println!("Successfully read message from disk");
-                        
+
                         return Ok(Some(message_buf));
                     }
                 }
@@ -488,4 +534,5 @@ impl MessageStore for DiskMessageStore {
             }
         }
     }
-} 
+}
+

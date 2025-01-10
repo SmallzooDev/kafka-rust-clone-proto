@@ -7,8 +7,8 @@ pub struct TopicPartition {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TopicMetadata {
     pub error_code: i16,
-    pub name: String,     
-    pub topic_id: String, 
+    pub name: String,
+    pub topic_id: String,
     pub is_internal: bool,
     pub partitions: Vec<Partition>,
     pub topic_authorized_operations: i32,
@@ -51,4 +51,5 @@ impl Partition {
             off_line_replicas,
         }
     }
-} 
+}
+

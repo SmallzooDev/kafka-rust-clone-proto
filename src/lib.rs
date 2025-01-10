@@ -4,4 +4,5 @@ pub mod config;
 pub mod domain;
 pub mod ports;
 
-pub use application::error::{ApplicationError, Result}; 
+pub use application::error::{ApplicationError, Result};
+

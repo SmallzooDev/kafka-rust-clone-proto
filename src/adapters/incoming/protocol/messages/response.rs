@@ -1,8 +1,5 @@
 use crate::adapters::incoming::protocol::constants::{
-    API_VERSIONS_KEY,
-    DESCRIBE_TOPIC_PARTITIONS_KEY,
-    FETCH_KEY,
-    PRODUCE_KEY,
+    API_VERSIONS_KEY, DESCRIBE_TOPIC_PARTITIONS_KEY, FETCH_KEY, PRODUCE_KEY,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +40,7 @@ impl ApiVersionsResponse {
                 api_key: PRODUCE_KEY,
                 min_version: 0,
                 max_version: 9,
-            }
+            },
         ])
     }
 }
@@ -51,9 +48,9 @@ impl ApiVersionsResponse {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TopicResponse {
     pub topic_name: String,
-    pub topic_id: [u8; 16],  // UUID as 16 bytes
-    pub error_code: i16,     // topic level error code
-    pub is_internal: bool,   // is_internal flag
+    pub topic_id: [u8; 16], // UUID as 16 bytes
+    pub error_code: i16,    // topic level error code
+    pub is_internal: bool,  // is_internal flag
     pub partitions: Vec<PartitionInfo>,
 }
 
@@ -69,6 +66,7 @@ pub struct PartitionInfo {
 }
 
 impl DescribeTopicPartitionsResponse {
+    #[allow(dead_code)]
     pub fn new_unknown_topic(topic_name: String) -> Self {
         Self {
             topics: vec![TopicResponse {
@@ -116,19 +114,15 @@ impl FetchResponse {
         Self {
             throttle_time_ms: 0,
             session_id: 0,
-            responses: vec![
-                FetchableTopicResponse {
-                    topic_id,
-                    partitions: vec![
-                        FetchablePartitionResponse {
-                            partition_index: 0,
-                            error_code: 0,  // No Error
-                            high_watermark: 0,
-                            records: None,
-                        }
-                    ],
-                }
-            ],
+            responses: vec![FetchableTopicResponse {
+                topic_id,
+                partitions: vec![FetchablePartitionResponse {
+                    partition_index: 0,
+                    error_code: 0, // No Error
+                    high_watermark: 0,
+                    records: None,
+                }],
+            }],
         }
     }
 
@@ -136,19 +130,15 @@ impl FetchResponse {
         Self {
             throttle_time_ms: 0,
             session_id: 0,
-            responses: vec![
-                FetchableTopicResponse {
-                    topic_id,
-                    partitions: vec![
-                        FetchablePartitionResponse {
-                            partition_index: 0,
-                            error_code: 100, // UNKNOWN_TOPIC
-                            high_watermark: 0,
-                            records: None,
-                        }
-                    ],
-                }
-            ],
+            responses: vec![FetchableTopicResponse {
+                topic_id,
+                partitions: vec![FetchablePartitionResponse {
+                    partition_index: 0,
+                    error_code: 100, // UNKNOWN_TOPIC
+                    high_watermark: 0,
+                    records: None,
+                }],
+            }],
         }
     }
 }
@@ -196,4 +186,5 @@ impl KafkaResponse {
             payload,
         }
     }
-} 
+}
+

@@ -1,4 +1,5 @@
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub enum DomainError {
     InvalidProtocol(String),
     InvalidRequest,
@@ -15,4 +16,5 @@ impl std::fmt::Display for DomainError {
     }
 }
 
-impl std::error::Error for DomainError {} 
+impl std::error::Error for DomainError {}
+

@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use crate::ports::incoming::message_handler::MessageHandler;
 use crate::adapters::incoming::kafka_protocol_parser::KafkaProtocolParser;
 use crate::adapters::incoming::protocol::messages::{KafkaRequest, KafkaResponse};
+use crate::ports::incoming::message_handler::MessageHandler;
 use crate::Result;
+use std::sync::Arc;
 
 pub struct MockMessageHandler;
 
@@ -24,4 +24,5 @@ pub fn create_test_config() -> super::AppConfig {
         Arc::new(MockMessageHandler::new()),
         KafkaProtocolParser::new(),
     )
-} 
+}
+
