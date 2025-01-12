@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::Result;
-use crate::adapters::incoming::protocol::messages::{KafkaRequest, KafkaResponse};
+use crate::adapters::incoming::protocol::dto::{KafkaRequest, KafkaResponse};
 
 #[async_trait]
 pub trait MessageHandler: Send + Sync {

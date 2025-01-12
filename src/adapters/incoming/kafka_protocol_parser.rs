@@ -2,7 +2,7 @@ use crate::adapters::incoming::protocol::constants::{
     API_VERSIONS_KEY, DESCRIBE_TOPIC_PARTITIONS_KEY, FETCH_KEY, PRODUCE_KEY,
 };
 use crate::{
-    adapters::incoming::protocol::messages::{
+    adapters::incoming::protocol::dto::{
         DescribeTopicPartitionsRequest, FetchPartition, FetchRequest, FetchTopic, KafkaRequest,
         KafkaResponse, ProducePartitionData, ProduceRequest, ProduceTopicData, RequestHeader,
         RequestPayload, ResponsePayload, TopicRequest,
@@ -501,7 +501,7 @@ mod tests {
     use crate::adapters::incoming::protocol::constants::{
         MAX_SUPPORTED_VERSION, UNKNOWN_TOPIC_OR_PARTITION,
     };
-    use crate::adapters::incoming::protocol::messages::{
+    use crate::adapters::incoming::protocol::dto::{
         ApiVersion, ApiVersionsResponse, DescribeTopicPartitionsResponse, PartitionInfo,
         TopicResponse,
     };

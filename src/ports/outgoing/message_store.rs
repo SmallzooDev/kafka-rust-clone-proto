@@ -1,4 +1,4 @@
-use crate::adapters::incoming::protocol::messages::KafkaMessage;
+use crate::adapters::incoming::protocol::dto::KafkaMessage;
 use crate::Result;
 use async_trait::async_trait;
 

@@ -1,5 +1,5 @@
 use kafka_starter_rust::{
-    adapters::incoming::protocol::messages::KafkaMessage,
+    adapters::incoming::protocol::dto::KafkaMessage,
     adapters::outgoing::disk_store::DiskMessageStore, config::app_config::StoreConfig,
     ports::outgoing::message_store::MessageStore, Result,
 };
@@ -31,17 +31,17 @@ fn print_message_details(prefix: &str, message: &KafkaMessage) {
 
 fn print_test_summary(test_name: &str, total_messages: usize, successful_messages: usize, duration: Duration) {
     println!("\n=== {} Summary ===", test_name);
-    println!("Total messages processed: {}", total_messages);
+    println!("Total dto processed: {}", total_messages);
     println!("Successfully processed: {}", successful_messages);
-    println!("Failed messages: {}", total_messages - successful_messages);
+    println!("Failed dto: {}", total_messages - successful_messages);
     println!("Total duration: {:?}", duration);
 }
 
 fn print_buffer_summary(buffer_size: usize, next_offset: u64, flushed_count: usize) {
     println!("\n=== Buffer Status ===");
-    println!("Current size: {} messages", buffer_size);
+    println!("Current size: {} dto", buffer_size);
     println!("Next offset: {}", next_offset);
-    println!("Total flushed: {} messages", flushed_count);
+    println!("Total flushed: {} dto", flushed_count);
 }
 
 #[tokio::test]
@@ -279,14 +279,14 @@ async fn test_fetch_multiple_messages() -> Result<()> {
         },
     ];
 
-    println!("\nStoring messages:");
+    println!("\nStoring dto:");
     for (i, message) in messages.iter().enumerate() {
         print_message_details(&format!("Message {}", i + 1), message);
         let offset = store.store_message(message.clone()).await?;
         println!("Stored at offset: {}", offset);
     }
 
-    println!("\nReading messages back:");
+    println!("\nReading dto back:");
     for (i, message) in messages.iter().enumerate() {
         let read_result = store
             .read_messages(&message.topic, message.partition, i as i64)
@@ -507,7 +507,7 @@ async fn test_concurrent_heavy_load() {
     let messages_per_client = 10;
     let total_messages = client_count * messages_per_client;
 
-    println!("\nStarting concurrent test with {} clients, {} messages each", client_count, messages_per_client);
+    println!("\nStarting concurrent test with {} clients, {} dto each", client_count, messages_per_client);
 
     for i in 0..client_count {
         let topic = format!("concurrent-topic-{}", i);
@@ -531,7 +531,7 @@ async fn test_concurrent_heavy_load() {
 
             // 10개 메시지마다 진행 상황 출력
             if total_successful % 10 == 0 {
-                println!("Progress: {}/{} messages processed successfully", total_successful, total_messages);
+                println!("Progress: {}/{} dto processed successfully", total_successful, total_messages);
             }
         }
     }
