@@ -1,5 +1,295 @@
 use crate::application::error::ApplicationError;
 use bytes::{Buf, Bytes};
+use super::BaseParser;
+use super::{PrimitiveParser, CompactStringParser, CompactArrayParser, VarIntParser};
+use crate::adapters::protocol::dto::ErrorCode;
+use crate::domain::message::{TopicMetadata, Partition};
+use std::collections::HashMap;
+
+#[derive(Debug, Default, Clone)]
+pub struct KraftRecordParser {
+    base: BaseParser,
+}
+
+impl KraftRecordParser {
+    pub fn new() -> Self {
+        Self {
+            base: BaseParser::default(),
+        }
+    }
+
+    fn parse_compact_string(&self, src: &mut Bytes) -> Result<String, ApplicationError> {
+        self.base.parse_compact_string(src)
+    }
+
+    fn parse_compact_bytes(&self, src: &mut Bytes) -> Result<Vec<u8>, ApplicationError> {
+        self.base.parse_compact_bytes(src)
+    }
+
+    fn parse_varint(&self, src: &mut Bytes) -> Result<i64, ApplicationError> {
+        self.base.parse_varint(src)
+    }
+
+    fn parse_compact_array<T, F>(&self, src: &mut Bytes, parser: F) -> Result<Vec<T>, ApplicationError>
+    where
+        F: Fn(&mut Bytes) -> Result<T, ApplicationError>,
+    {
+        self.base.parse_compact_array(src, parser)
+    }
+
+    fn parse_nullable_bytes<T, F>(&self, src: &mut Bytes, parser: F) -> Result<Vec<T>, ApplicationError>
+    where
+        F: Fn(&mut Bytes) -> Result<T, ApplicationError>,
+    {
+        if src.remaining() < 4 {
+            return Err(ApplicationError::Protocol(
+                "buffer too short for length".to_string(),
+            ));
+        }
+        let len = src.get_i32();
+        let items_len = if len == -1 { 0 } else { len as usize };
+
+        let mut items = Vec::with_capacity(items_len);
+        for _ in 0..items_len {
+            items.push(parser(src)?);
+        }
+        Ok(items)
+    }
+
+    pub fn parse_record_batch(&self, src: &mut Bytes) -> Result<RecordBatch, ApplicationError> {
+        let base_offset = self.base.parse_i64(src)?;
+        let batch_length = self.base.parse_i32(src)?;
+        let partition_leader_epoch = self.base.parse_i32(src)?;
+        let magic = self.base.parse_i8(src)?;
+        let crc = self.base.parse_u32(src)?;
+        let attributes = self.base.parse_i16(src)?;
+        let last_offset_delta = self.base.parse_i32(src)?;
+        let base_timestamp = self.base.parse_i64(src)?;
+        let max_timestamp = self.base.parse_i64(src)?;
+        let producer_id = self.base.parse_i64(src)?;
+        let producer_epoch = self.base.parse_i16(src)?;
+        let base_sequence = self.base.parse_i32(src)?;
+
+        let records = self.parse_nullable_bytes(src, |src| self.parse_record(src))?;
+
+        Ok(RecordBatch {
+            base_offset,
+            batch_length,
+            partition_leader_epoch,
+            magic,
+            crc,
+            attributes,
+            last_offset_delta,
+            base_timestamp,
+            max_timestamp,
+            producer_id,
+            producer_epoch,
+            base_sequence,
+            records,
+        })
+    }
+
+    pub fn parse_record(&self, src: &mut Bytes) -> Result<Record, ApplicationError> {
+        let length = self.parse_varint(src)?;
+        let attributes = self.base.parse_i8(src)?;
+        let timestamp_delta = self.parse_varint(src)?;
+        let offset_delta = self.parse_varint(src)?;
+        let key = self.parse_compact_bytes(src)?;
+        let value_length = self.parse_varint(src)?;
+        let value = self.parse_record_value(src)?;
+        let headers = self.parse_compact_array(src, |_src| Ok(Header))?;
+
+        Ok(Record {
+            length,
+            attributes,
+            timestamp_delta,
+            offset_delta,
+            key,
+            value_length,
+            value,
+            headers,
+        })
+    }
+
+    pub fn parse_record_value(&self, src: &mut Bytes) -> Result<RecordValue, ApplicationError> {
+        let frame_version = self.base.parse_u8(src)?;
+        if frame_version != 1 {
+            return Err(ApplicationError::Protocol(format!(
+                "invalid frame version: {}",
+                frame_version
+            )));
+        }
+
+        let record_type = self.base.parse_u8(src)?;
+
+        match record_type {
+            2 => self.parse_topic_record(src),
+            3 => self.parse_partition_record(src),
+            12 => self.parse_feature_level_record(src),
+            _ => Err(ApplicationError::Protocol(format!(
+                "unknown record type: {}",
+                record_type
+            ))),
+        }
+    }
+
+    fn parse_topic_record(&self, src: &mut Bytes) -> Result<RecordValue, ApplicationError> {
+        let version = self.base.parse_u8(src)?;
+        if version != 0 {
+            return Err(ApplicationError::Protocol(format!(
+                "invalid version for topic record: {}",
+                version
+            )));
+        }
+
+        let topic_name = self.parse_compact_string(src)?;
+        let topic_id = self.parse_uuid(src)?;
+        let tagged_fields_count = self.parse_varint(src)?;
+        if tagged_fields_count != 0 {
+            return Err(ApplicationError::Protocol(format!(
+                "unexpected tagged fields count: {}",
+                tagged_fields_count
+            )));
+        }
+
+        Ok(RecordValue::Topic(TopicValue {
+            topic_name,
+            topic_id,
+        }))
+    }
+
+    fn parse_partition_record(&self, src: &mut Bytes) -> Result<RecordValue, ApplicationError> {
+        let version = self.base.parse_u8(src)?;
+        if version != 1 {
+            return Err(ApplicationError::Protocol(format!(
+                "invalid version for partition record: {}",
+                version
+            )));
+        }
+
+        let partition_id = self.base.parse_u32(src)?;
+        let topic_id = self.parse_uuid(src)?;
+
+        let replicas = self.parse_compact_array(src, |src| self.base.parse_u32(src))?;
+        let in_sync_replicas = self.parse_compact_array(src, |src| self.base.parse_u32(src))?;
+        let removing_replicas = self.parse_compact_array(src, |src| self.base.parse_u32(src))?;
+        let adding_replicas = self.parse_compact_array(src, |src| self.base.parse_u32(src))?;
+
+        let leader_id = self.base.parse_u32(src)?;
+        let leader_epoch = self.base.parse_u32(src)?;
+        let partition_epoch = self.base.parse_u32(src)?;
+
+        let directories = self.parse_compact_array(src, |src| self.parse_compact_string(src))?;
+        let tagged_fields_count = self.parse_varint(src)?;
+        if tagged_fields_count != 0 {
+            return Err(ApplicationError::Protocol(format!(
+                "unexpected tagged fields count: {}",
+                tagged_fields_count
+            )));
+        }
+
+        Ok(RecordValue::Partition(PartitionValue {
+            partition_id,
+            topic_id,
+            replicas,
+            in_sync_replicas,
+            removing_replicas,
+            adding_replicas,
+            leader_id,
+            leader_epoch,
+            partition_epoch,
+            directories,
+        }))
+    }
+
+    fn parse_feature_level_record(&self, src: &mut Bytes) -> Result<RecordValue, ApplicationError> {
+        let version = self.base.parse_u8(src)?;
+        if version != 0 {
+            return Err(ApplicationError::Protocol(format!(
+                "invalid version for feature level record: {}",
+                version
+            )));
+        }
+
+        let name = self.parse_compact_string(src)?;
+        let level = self.base.parse_u16(src)?;
+
+        let tagged_fields_count = self.parse_varint(src)?;
+        if tagged_fields_count != 0 {
+            return Err(ApplicationError::Protocol(format!(
+                "unexpected tagged fields count: {}",
+                tagged_fields_count
+            )));
+        }
+
+        Ok(RecordValue::FeatureLevel(FeatureLevelValue { name, level }))
+    }
+
+    fn parse_uuid(&self, src: &mut Bytes) -> Result<String, ApplicationError> {
+        if src.remaining() < 16 {
+            return Err(ApplicationError::Protocol(
+                "buffer too short for UUID".to_string(),
+            ));
+        }
+
+        let mut s = hex::encode(src.slice(..16));
+        src.advance(16);
+        s.insert(8, '-');
+        s.insert(13, '-');
+        s.insert(18, '-');
+        s.insert(23, '-');
+        Ok(s)
+    }
+
+    pub fn parse_metadata(&self, data: &mut Bytes) -> Result<HashMap<String, TopicMetadata>, ApplicationError> {
+        let mut topics_by_name: HashMap<String, TopicMetadata> = HashMap::new();
+        let mut topics_by_id: HashMap<String, String> = HashMap::new();
+
+        while data.remaining() > 0 {
+            let record_batch = self.parse_record_batch(data)?;
+
+            // First pass: Collect all topics
+            for rec in &record_batch.records {
+                if let RecordValue::Topic(topic) = &rec.value {
+                    let topic_metadata = topics_by_name
+                        .entry(topic.topic_name.clone())
+                        .or_insert_with(|| TopicMetadata {
+                            error_code: i16::from(ErrorCode::None),
+                            name: topic.topic_name.clone(),
+                            topic_id: topic.topic_id.clone(),
+                            is_internal: false,
+                            partitions: Vec::new(),
+                            topic_authorized_operations: 0x0DF,
+                        });
+                    topics_by_id.insert(topic.topic_id.clone(), topic.topic_name.clone());
+                }
+            }
+
+            // Second pass: Add partitions to corresponding topics
+            for rec in &record_batch.records {
+                if let RecordValue::Partition(p) = &rec.value {
+                    if let Some(topic_name) = topics_by_id.get(&p.topic_id) {
+                        if let Some(topic_metadata) = topics_by_name.get_mut(topic_name) {
+                            topic_metadata.partitions.push(Partition::new(
+                                i16::from(ErrorCode::None),
+                                p.partition_id,
+                                p.leader_id,
+                                p.leader_epoch,
+                                p.replicas.clone(),
+                                p.in_sync_replicas.clone(),
+                                p.adding_replicas.clone(),
+                                Vec::new(),
+                                p.removing_replicas.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(topics_by_name)
+    }
+}
 
 // === Type Definitions ===
 
@@ -75,485 +365,6 @@ pub struct FeatureLevelValue {
 #[derive(Debug, Clone, Copy)]
 struct Header;
 
-pub trait Deserialize<T> {
-    fn deserialize(src: &mut Bytes) -> Result<T, ApplicationError>;
-}
-
-pub struct CompactString;
-
-pub struct CompactArray;
-
-pub struct NullableBytes;
-
-pub struct CompactNullableBytes;
-
-pub struct VarInt;
-
-pub struct Uuid;
-
-impl RecordBatch {
-    pub fn from_bytes(src: &mut Bytes) -> Result<Self, ApplicationError> {
-        if src.remaining() < 8 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for base_offset".to_string(),
-            ));
-        }
-        let base_offset = src.get_i64();
-
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for batch_length".to_string(),
-            ));
-        }
-        let batch_length = src.get_i32();
-
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for partition_leader_epoch".to_string(),
-            ));
-        }
-        let partition_leader_epoch = src.get_i32();
-
-        if src.remaining() < 1 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for magic".to_string(),
-            ));
-        }
-        let magic = src.get_i8();
-
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for crc".to_string(),
-            ));
-        }
-        let crc = src.get_u32();
-
-        if src.remaining() < 2 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for attributes".to_string(),
-            ));
-        }
-        let attributes = src.get_i16();
-
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for last_offset_delta".to_string(),
-            ));
-        }
-        let last_offset_delta = src.get_i32();
-
-        if src.remaining() < 8 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for base_timestamp".to_string(),
-            ));
-        }
-        let base_timestamp = src.get_i64();
-
-        if src.remaining() < 8 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for max_timestamp".to_string(),
-            ));
-        }
-        let max_timestamp = src.get_i64();
-
-        if src.remaining() < 8 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for producer_id".to_string(),
-            ));
-        }
-        let producer_id = src.get_i64();
-
-        if src.remaining() < 2 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for producer_epoch".to_string(),
-            ));
-        }
-        let producer_epoch = src.get_i16();
-
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for base_sequence".to_string(),
-            ));
-        }
-        let base_sequence = src.get_i32();
-
-        let records = NullableBytes::deserialize::<Record, RecordBatch>(src)?;
-
-        Ok(Self {
-            base_offset,
-            batch_length,
-            partition_leader_epoch,
-            magic,
-            crc,
-            attributes,
-            last_offset_delta,
-            base_timestamp,
-            max_timestamp,
-            producer_id,
-            producer_epoch,
-            base_sequence,
-            records,
-        })
-    }
-}
-
-impl Record {
-    pub fn from_bytes(src: &mut Bytes) -> Result<Self, ApplicationError> {
-        let length = VarInt::deserialize(src)?;
-
-        if src.remaining() < 1 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for attributes".to_string(),
-            ));
-        }
-        let attributes = src.get_i8();
-
-        let timestamp_delta = VarInt::deserialize(src)?;
-        let offset_delta = VarInt::deserialize(src)?;
-        let key = CompactNullableBytes::deserialize(src)?;
-        let value_length = VarInt::deserialize(src)?;
-        let value = RecordValue::from_bytes(src)?;
-        let headers = CompactArray::deserialize::<Header, Record>(src)?;
-
-        Ok(Record {
-            length,
-            attributes,
-            timestamp_delta,
-            offset_delta,
-            key,
-            value_length,
-            value,
-            headers,
-        })
-    }
-}
-
-impl RecordValue {
-    pub fn from_bytes(src: &mut Bytes) -> Result<Self, ApplicationError> {
-        if src.remaining() < 1 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for frame_version".to_string(),
-            ));
-        }
-        let frame_version = src.get_u8();
-        if frame_version != 1 {
-            return Err(ApplicationError::Protocol(format!(
-                "invalid frame version: {}",
-                frame_version
-            )));
-        }
-
-        if src.remaining() < 1 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for record_type".to_string(),
-            ));
-        }
-        let record_type = src.get_u8();
-
-        match record_type {
-            2 => {
-                if src.remaining() < 1 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for version".to_string(),
-                    ));
-                }
-                let version = src.get_u8();
-                if version != 0 {
-                    return Err(ApplicationError::Protocol(format!(
-                        "invalid version for topic record: {}",
-                        version
-                    )));
-                }
-
-                let topic_name = CompactString::deserialize(src)?;
-                let topic_id = Uuid::deserialize(src)?;
-                let tagged_fields_count = VarInt::deserialize(src)?;
-                if tagged_fields_count != 0 {
-                    return Err(ApplicationError::Protocol(format!(
-                        "unexpected tagged fields count: {}",
-                        tagged_fields_count
-                    )));
-                }
-
-                Ok(RecordValue::Topic(TopicValue {
-                    topic_name,
-                    topic_id,
-                }))
-            }
-            3 => {
-                if src.remaining() < 1 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for version".to_string(),
-                    ));
-                }
-                let version = src.get_u8();
-                if version != 1 {
-                    return Err(ApplicationError::Protocol(format!(
-                        "invalid version for partition record: {}",
-                        version
-                    )));
-                }
-
-                if src.remaining() < 4 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for partition_id".to_string(),
-                    ));
-                }
-                let partition_id = src.get_u32();
-                let topic_id = Uuid::deserialize(src)?;
-
-                let replicas = CompactArray::deserialize::<u32, PartitionValue>(src)?;
-                let in_sync_replicas = CompactArray::deserialize::<u32, PartitionValue>(src)?;
-                let removing_replicas = CompactArray::deserialize::<u32, PartitionValue>(src)?;
-                let adding_replicas = CompactArray::deserialize::<u32, PartitionValue>(src)?;
-
-                if src.remaining() < 4 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for leader_id".to_string(),
-                    ));
-                }
-                let leader_id = src.get_u32();
-
-                if src.remaining() < 4 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for leader_epoch".to_string(),
-                    ));
-                }
-                let leader_epoch = src.get_u32();
-
-                if src.remaining() < 4 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for partition_epoch".to_string(),
-                    ));
-                }
-                let partition_epoch = src.get_u32();
-
-                let directories = CompactArray::deserialize::<String, PartitionValue>(src)?;
-                let tagged_fields_count = VarInt::deserialize(src)?;
-                if tagged_fields_count != 0 {
-                    return Err(ApplicationError::Protocol(format!(
-                        "unexpected tagged fields count: {}",
-                        tagged_fields_count
-                    )));
-                }
-
-                Ok(RecordValue::Partition(PartitionValue {
-                    partition_id,
-                    topic_id,
-                    replicas,
-                    in_sync_replicas,
-                    removing_replicas,
-                    adding_replicas,
-                    leader_id,
-                    leader_epoch,
-                    partition_epoch,
-                    directories,
-                }))
-            }
-            12 => {
-                if src.remaining() < 1 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for version".to_string(),
-                    ));
-                }
-                let version = src.get_u8();
-                if version != 0 {
-                    return Err(ApplicationError::Protocol(format!(
-                        "invalid version for feature level record: {}",
-                        version
-                    )));
-                }
-
-                let name = CompactString::deserialize(src)?;
-
-                if src.remaining() < 2 {
-                    return Err(ApplicationError::Protocol(
-                        "buffer too short for level".to_string(),
-                    ));
-                }
-                let level = src.get_u16();
-
-                let tagged_fields_count = VarInt::deserialize(src)?;
-                if tagged_fields_count != 0 {
-                    return Err(ApplicationError::Protocol(format!(
-                        "unexpected tagged fields count: {}",
-                        tagged_fields_count
-                    )));
-                }
-
-                Ok(RecordValue::FeatureLevel(FeatureLevelValue { name, level }))
-            }
-            _ => Err(ApplicationError::Protocol(format!(
-                "unknown record type: {}",
-                record_type
-            ))),
-        }
-    }
-}
-
-impl Deserialize<Record> for RecordBatch {
-    fn deserialize(src: &mut Bytes) -> Result<Record, ApplicationError> {
-        Record::from_bytes(src)
-    }
-}
-
-impl Deserialize<Header> for Record {
-    fn deserialize(_src: &mut Bytes) -> Result<Header, ApplicationError> {
-        Ok(Header)
-    }
-}
-
-impl Deserialize<String> for CompactString {
-    fn deserialize(src: &mut Bytes) -> Result<String, ApplicationError> {
-        Self::deserialize(src)
-    }
-}
-
-impl Deserialize<u32> for PartitionValue {
-    fn deserialize(src: &mut Bytes) -> Result<u32, ApplicationError> {
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for u32".to_string(),
-            ));
-        }
-        Ok(src.get_u32())
-    }
-}
-
-impl Deserialize<String> for PartitionValue {
-    fn deserialize(src: &mut Bytes) -> Result<String, ApplicationError> {
-        Uuid::deserialize(src)
-    }
-}
-
-impl CompactString {
-    pub fn deserialize(src: &mut Bytes) -> Result<String, ApplicationError> {
-        let len = VarInt::deserialize(src)?;
-        let string_len = if len > 1 { len as usize - 1 } else { 0 };
-
-        if src.remaining() < string_len {
-            return Err(ApplicationError::Protocol(format!(
-                "buffer too short for string of length {}",
-                string_len
-            )));
-        }
-
-        let bytes = src.slice(..string_len);
-        src.advance(string_len);
-
-        String::from_utf8(bytes.to_vec())
-            .map_err(|e| ApplicationError::Protocol(format!("invalid UTF-8 sequence: {}", e)))
-    }
-}
-
-impl CompactArray {
-    pub fn deserialize<T, U: Deserialize<T>>(src: &mut Bytes) -> Result<Vec<T>, ApplicationError> {
-        let len = VarInt::deserialize(src)?;
-        let items_len = if len > 1 { len as usize - 1 } else { 0 };
-
-        let mut items = Vec::with_capacity(items_len);
-        for _ in 0..items_len {
-            items.push(U::deserialize(src)?);
-        }
-
-        Ok(items)
-    }
-}
-
-impl NullableBytes {
-    pub fn deserialize<T, U: Deserialize<T>>(src: &mut Bytes) -> Result<Vec<T>, ApplicationError> {
-        if src.remaining() < 4 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for length".to_string(),
-            ));
-        }
-        let len = src.get_i32();
-        let items_len = if len == -1 { 0 } else { len as usize };
-
-        let mut items = Vec::with_capacity(items_len);
-        for _ in 0..items_len {
-            items.push(U::deserialize(src)?);
-        }
-        Ok(items)
-    }
-}
-
-impl CompactNullableBytes {
-    pub fn deserialize(src: &mut Bytes) -> Result<Vec<u8>, ApplicationError> {
-        let len = VarInt::deserialize(src)?;
-        let bytes_len = if len > 1 { len as usize - 1 } else { 0 };
-
-        if src.remaining() < bytes_len {
-            return Err(ApplicationError::Protocol(format!(
-                "buffer too short for bytes of length {}",
-                bytes_len
-            )));
-        }
-
-        let bytes = src.slice(..bytes_len);
-        src.advance(bytes_len);
-        Ok(bytes.to_vec())
-    }
-}
-
-impl VarInt {
-    pub(crate) fn deserialize<T>(buf: &mut T) -> Result<i64, ApplicationError>
-    where
-        T: Buf,
-    {
-        const MAX_BYTES: usize = 10;
-        if buf.remaining() == 0 {
-            return Err(ApplicationError::Protocol("buffer is empty".to_string()));
-        }
-
-        let buf_len = buf.remaining();
-        let mut b0 = buf.get_i8() as i64;
-        let mut res = b0 & 0b0111_1111;
-        let mut n_bytes = 1;
-
-        while b0 & 0b1000_0000 != 0 && n_bytes <= MAX_BYTES {
-            if buf.remaining() == 0 {
-                return Err(ApplicationError::Protocol(format!(
-                    "buffer too short ({} bytes) for varint",
-                    buf_len
-                )));
-            }
-
-            let b1 = buf.get_i8() as i64;
-            if buf.remaining() == 0 && b1 & 0b1000_0000 != 0 {
-                return Err(ApplicationError::Protocol(format!(
-                    "invalid varint encoding at byte {}",
-                    n_bytes
-                )));
-            }
-
-            res += (b1 & 0b0111_1111) << 7;
-            n_bytes += 1;
-            b0 = b1;
-        }
-
-        Ok(res)
-    }
-}
-
-impl Uuid {
-    pub fn deserialize(src: &mut Bytes) -> Result<String, ApplicationError> {
-        if src.remaining() < 16 {
-            return Err(ApplicationError::Protocol(
-                "buffer too short for UUID".to_string(),
-            ));
-        }
-
-        let mut s = hex::encode(src.slice(..16));
-        src.advance(16);
-        s.insert(8, '-');
-        s.insert(13, '-');
-        s.insert(18, '-');
-        s.insert(23, '-');
-        Ok(s)
-    }
-}
-
 #[allow(dead_code)]
 pub fn decode_varint(buf: &[u8]) -> u64 {
     let mut result: u64 = 0;
@@ -574,6 +385,56 @@ pub fn decode_varint(buf: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
+
+    #[test]
+    fn test_kraft_record_parser() {
+        let parser = KraftRecordParser::new();
+        
+        // parse_metadata 테스트
+        let mut data = Bytes::from(vec![
+            // RecordBatch with Topic
+            0, 0, 0, 0, 0, 0, 0, 1, // base offset
+            0, 0, 0, 100, // batch length
+            0, 0, 0, 0, // partition leader epoch
+            2, // magic
+            0, 0, 0, 0, // crc
+            0, 1, // attributes
+            0, 0, 0, 0, // last offset delta
+            0, 0, 0, 0, 0, 0, 0, 0, // base timestamp
+            0, 0, 0, 0, 0, 0, 0, 0, // max timestamp
+            0, 0, 0, 0, 0, 0, 0, 0, // producer id
+            0, 0, // producer epoch
+            0, 0, 0, 0, // base sequence
+            0, 0, 0, 1, // records length (1 record)
+            // Record (Topic)
+            2, // length
+            0, // attributes
+            2, // timestamp delta
+            2, // offset delta
+            1, // key length (empty)
+            2, // value length
+            1, // frame version
+            2, // record type (Topic)
+            0, // version
+            5, // topic name length (4 + 1)
+            b't', b'e', b's', b't', // topic name
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, // topic id
+            0, // tagged fields count
+            1, // headers length (empty)
+        ]);
+
+        let result = parser.parse_metadata(&mut data);
+        assert!(result.is_ok());
+        let topics = result.unwrap();
+        assert_eq!(topics.len(), 1);
+        
+        let topic = topics.get("test").unwrap();
+        assert_eq!(topic.name, "test");
+        assert_eq!(topic.topic_id, "ffffffff-ffff-ffff-ffff-ffffffffffff");
+        assert_eq!(topic.partitions.len(), 0);
+    }
 
     #[test]
     fn test_decode_varint() {
@@ -588,35 +449,35 @@ mod tests {
     }
 
     #[test]
-    fn test_compact_string_deserialize() {
+    fn test_compact_string() {
         let mut bytes = Bytes::from(vec![6, b'h', b'e', b'l', b'l', b'o']);
-        assert_eq!(CompactString::deserialize(&mut bytes).unwrap(), "hello");
+        let parser = KraftRecordParser::new();
+        assert_eq!(parser.parse_compact_string(&mut bytes).unwrap(), "hello");
 
         // 빈 문자열
         let mut bytes = Bytes::from(vec![1]);
-        assert_eq!(CompactString::deserialize(&mut bytes).unwrap(), "");
+        assert_eq!(parser.parse_compact_string(&mut bytes).unwrap(), "");
 
         // 잘못된 UTF-8
         let mut bytes = Bytes::from(vec![2, 0xff]);
-        assert!(CompactString::deserialize(&mut bytes).is_err());
+        assert!(parser.parse_compact_string(&mut bytes).is_err());
     }
 
     #[test]
-    fn test_compact_array_deserialize() {
+    fn test_compact_array() {
         // u32 배열 테스트
         let mut bytes = Bytes::from(vec![
             3, // array length (2 + 1)
             0, 0, 0, 1, // first element
             0, 0, 0, 2, // second element
         ]);
-        let result: Vec<u32> =
-            CompactArray::deserialize::<u32, PartitionValue>(&mut bytes).unwrap();
+        let parser = KraftRecordParser::new();
+        let result = parser.parse_compact_array(&mut bytes, |src| parser.base.parse_u32(src)).unwrap();
         assert_eq!(result, vec![1, 2]);
 
         // 빈 배열
         let mut bytes = Bytes::from(vec![1]); // length = 1 means empty array
-        let result: Vec<u32> =
-            CompactArray::deserialize::<u32, PartitionValue>(&mut bytes).unwrap();
+        let result = parser.parse_compact_array(&mut bytes, |src| parser.base.parse_u32(src)).unwrap();
         assert_eq!(result, Vec::<u32>::new());
     }
 
@@ -634,7 +495,8 @@ mod tests {
             0,    // tagged fields count
         ]);
 
-        match RecordValue::from_bytes(&mut bytes).unwrap() {
+        let parser = KraftRecordParser::new();
+        match parser.parse_record_value(&mut bytes).unwrap() {
             RecordValue::Topic(topic) => {
                 assert_eq!(topic.topic_name, "test");
                 assert_eq!(topic.topic_id, "ffffffff-ffff-ffff-ffff-ffffffffffff");
@@ -659,9 +521,10 @@ mod tests {
             0, 0, 0, 0, // partition epoch
             1, // directories array length (empty)
             0, // tagged fields count
+            1, // headers length (empty)
         ]);
 
-        match RecordValue::from_bytes(&mut bytes).unwrap() {
+        match parser.parse_record_value(&mut bytes).unwrap() {
             RecordValue::Partition(partition) => {
                 assert_eq!(partition.partition_id, 1);
                 assert_eq!(partition.topic_id, "ffffffff-ffff-ffff-ffff-ffffffffffff");
@@ -694,7 +557,8 @@ mod tests {
             0, 0, 0, 0, // records length (empty)
         ]);
 
-        let batch = RecordBatch::from_bytes(&mut bytes).unwrap();
+        let parser = KraftRecordParser::new();
+        let batch = parser.parse_record_batch(&mut bytes).unwrap();
         assert_eq!(batch.base_offset, 1);
         assert_eq!(batch.batch_length, 100);
         assert_eq!(batch.magic, 2);
@@ -721,7 +585,8 @@ mod tests {
             1, // headers length (empty)
         ]);
 
-        let record = Record::from_bytes(&mut bytes).unwrap();
+        let parser = KraftRecordParser::new();
+        let record = parser.parse_record(&mut bytes).unwrap();
         assert_eq!(record.length, 2);
         assert_eq!(record.attributes, 0);
         assert_eq!(record.timestamp_delta, 2);
@@ -735,6 +600,114 @@ mod tests {
             }
             _ => panic!("Expected FeatureLevel record"),
         }
+    }
+
+    #[test]
+    fn test_parse_uuid() {
+        let mut bytes = Bytes::from(vec![
+            0x01, 0x23, 0x45, 0x67,
+            0x89, 0xab, 0xcd, 0xef,
+            0xfe, 0xdc, 0xba, 0x98,
+            0x76, 0x54, 0x32, 0x10,
+        ]);
+
+        let parser = KraftRecordParser::new();
+        let uuid = parser.parse_uuid(&mut bytes).unwrap();
+        assert_eq!(uuid, "01234567-89ab-cdef-fedc-ba9876543210");
+    }
+
+    #[test]
+    fn test_parse_metadata_with_partition() {
+        let parser = KraftRecordParser::new();
+        
+        let mut data = Bytes::from(vec![
+            // First RecordBatch (Topic)
+            0, 0, 0, 0, 0, 0, 0, 1, // base offset
+            0, 0, 0, 100, // batch length
+            0, 0, 0, 0, // partition leader epoch
+            2, // magic
+            0, 0, 0, 0, // crc
+            0, 1, // attributes
+            0, 0, 0, 0, // last offset delta
+            0, 0, 0, 0, 0, 0, 0, 0, // base timestamp
+            0, 0, 0, 0, 0, 0, 0, 0, // max timestamp
+            0, 0, 0, 0, 0, 0, 0, 0, // producer id
+            0, 0, // producer epoch
+            0, 0, 0, 0, // base sequence
+            0, 0, 0, 1, // records length (1 record)
+            // Record (Topic)
+            2, // length
+            0, // attributes
+            2, // timestamp delta
+            2, // offset delta
+            1, // key length (empty)
+            2, // value length
+            1, // frame version
+            2, // record type (Topic)
+            0, // version
+            5, // topic name length (4 + 1)
+            b't', b'e', b's', b't', // topic name
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, // topic id
+            0, // tagged fields count
+            1, // headers length (empty)
+
+            // Second RecordBatch (Partition)
+            0, 0, 0, 0, 0, 0, 0, 2, // base offset
+            0, 0, 0, 100, // batch length
+            0, 0, 0, 0, // partition leader epoch
+            2, // magic
+            0, 0, 0, 0, // crc
+            0, 1, // attributes
+            0, 0, 0, 0, // last offset delta
+            0, 0, 0, 0, 0, 0, 0, 0, // base timestamp
+            0, 0, 0, 0, 0, 0, 0, 0, // max timestamp
+            0, 0, 0, 0, 0, 0, 0, 0, // producer id
+            0, 0, // producer epoch
+            0, 0, 0, 0, // base sequence
+            0, 0, 0, 1, // records length (1 record)
+            // Record (Partition)
+            2, // length
+            0, // attributes
+            2, // timestamp delta
+            2, // offset delta
+            1, // key length (empty)
+            2, // value length
+            1, // frame version
+            3, // record type (Partition)
+            1, // version
+            0, 0, 0, 1, // partition id
+            0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, // topic id
+            1, // replicas array length (empty)
+            1, // isr array length (empty)
+            1, // removing replicas array length (empty)
+            1, // adding replicas array length (empty)
+            0, 0, 0, 1, // leader id
+            0, 0, 0, 0, // leader epoch
+            0, 0, 0, 0, // partition epoch
+            1, // directories array length (empty)
+            0, // tagged fields count
+            1, // headers length (empty)
+        ]);
+
+        let result = parser.parse_metadata(&mut data).unwrap();
+        assert_eq!(result.len(), 1);
+        
+        let topic = result.get("test").unwrap();
+        assert_eq!(topic.name, "test");
+        assert_eq!(topic.topic_id, "ffffffff-ffff-ffff-ffff-ffffffffffff");
+        assert_eq!(topic.partitions.len(), 1);
+        
+        let partition = &topic.partitions[0];
+        assert_eq!(partition.partition_index, 1);
+        assert_eq!(partition.leader_id, 1);
+        assert_eq!(partition.leader_epoch, 0);
+        assert!(partition.replicas.is_empty());
+        assert!(partition.in_sync_replicas.is_empty());
+        assert!(partition.off_line_replicas.is_empty());
+        assert!(partition.eligible_leader_replicas.is_empty());
+        assert!(partition.last_known_eligible_leader_replicas.is_empty());
     }
 }
 
