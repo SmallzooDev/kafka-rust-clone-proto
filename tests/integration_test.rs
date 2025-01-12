@@ -1,5 +1,4 @@
 use kafka_starter_rust::{
-    adapters::incoming::protocol::dto::KafkaMessage,
     adapters::outgoing::disk_store::DiskMessageStore, config::app_config::StoreConfig,
     ports::outgoing::message_store::MessageStore, Result,
 };
@@ -7,6 +6,7 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::fs;
 use std::sync::Arc;
+use kafka_starter_rust::domain::message::KafkaMessage;
 
 // 테스트 결과를 출력하는 헬퍼 함수
 fn print_test_header(test_name: &str) {

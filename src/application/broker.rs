@@ -4,11 +4,11 @@ use crate::adapters::incoming::protocol::constants::{
 };
 use crate::adapters::incoming::protocol::dto::{
     ApiVersionsResponse, DescribeTopicPartitionsResponse, ErrorCode, FetchResponse,
-    FetchablePartitionResponse, FetchableTopicResponse, KafkaMessage, KafkaRequest, KafkaResponse,
+    FetchablePartitionResponse, FetchableTopicResponse, KafkaRequest, KafkaResponse,
     PartitionInfo, ProducePartitionResponse, ProduceResponse, ProduceTopicResponse, RequestPayload,
     ResponsePayload, TopicResponse,
 };
-use crate::domain::message::TopicMetadata;
+use crate::domain::message::{KafkaMessage, TopicMetadata};
 use crate::ports::incoming::message_handler::MessageHandler;
 use crate::ports::outgoing::message_store::MessageStore;
 use crate::ports::outgoing::metadata_store::MetadataStore;
@@ -286,9 +286,9 @@ mod tests {
 
     use super::*;
     use crate::adapters::incoming::protocol::dto::{
-        DescribeTopicPartitionsRequest, KafkaMessage, RequestHeader, TopicRequest,
+        DescribeTopicPartitionsRequest, RequestHeader, TopicRequest,
     };
-    use crate::domain::message::TopicMetadata;
+    use crate::domain::message::{KafkaMessage, TopicMetadata};
     use async_trait::async_trait;
 
     struct MockMessageStore {

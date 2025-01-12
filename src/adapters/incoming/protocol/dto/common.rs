@@ -26,15 +26,3 @@ impl From<i16> for ErrorCode {
         }
     }
 }
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct KafkaMessage {
-    pub correlation_id: i32,
-    pub payload: Vec<u8>,
-    pub topic: String,
-    pub partition: i32,
-    pub offset: u64,
-    pub timestamp: u64,
-}
-

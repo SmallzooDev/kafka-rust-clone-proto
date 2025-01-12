@@ -1,4 +1,4 @@
-use crate::adapters::incoming::protocol::dto::KafkaMessage;
+use crate::domain::message::KafkaMessage;
 use crate::config::app_config::StoreConfig;
 use crate::domain::message::TopicPartition;
 use crate::ports::outgoing::message_store::MessageStore;
