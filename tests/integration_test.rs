@@ -151,7 +151,7 @@ async fn test_disk_store_concurrent_access() -> Result<()> {
     };
 
     let store = DiskMessageStore::new(temp_dir.path().to_path_buf(), config);
-    let store = std::sync::Arc::new(store);
+    let store = Arc::new(store);
 
     // 여러 작업을 동시에 실행
     let mut handles = vec![];
@@ -423,7 +423,7 @@ async fn test_concurrent_message_store() -> Result<()> {
         flush_interval: Duration::from_millis(100),
     };
 
-    let store = std::sync::Arc::new(DiskMessageStore::new(
+    let store = Arc::new(DiskMessageStore::new(
         temp_dir.path().to_path_buf(),
         config,
     ));
@@ -522,7 +522,7 @@ async fn test_concurrent_heavy_load() {
                 payload: format!("Message {}-{}", i, j).into_bytes(),
             };
             
-            let offset = store.store_message(message).await.expect("Failed to store message");
+            let _offset = store.store_message(message).await.expect("Failed to store message");
             let result = store.read_messages(&topic, 0, j as i64).await.expect("Failed to read message");
             
             if result.is_some() {
