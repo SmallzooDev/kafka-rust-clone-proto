@@ -1,7 +1,7 @@
 use crate::application::error::ApplicationError;
 use bytes::{Buf, Bytes};
-use super::BaseParser;
-use super::{PrimitiveParser, CompactStringParser, CompactArrayParser, VarIntParser};
+use crate::adapters::protocol::parser::BaseParser;
+use crate::adapters::protocol::parser::{PrimitiveParser, CompactStringParser, CompactArrayParser, VarIntParser};
 use crate::adapters::protocol::dto::ErrorCode;
 use crate::domain::message::{TopicMetadata, Partition};
 use std::collections::HashMap;

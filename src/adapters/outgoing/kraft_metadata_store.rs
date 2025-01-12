@@ -1,5 +1,5 @@
 use crate::adapters::protocol::dto::ErrorCode;
-use crate::adapters::protocol::parser::kraft_record_parser::KraftRecordParser;
+use crate::adapters::protocol::kraft_record_parser::KraftRecordParser;
 use crate::application::error::ApplicationError;
 use crate::domain::message::TopicMetadata;
 use crate::ports::outgoing::metadata_store::MetadataStore;

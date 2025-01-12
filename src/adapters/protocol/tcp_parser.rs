@@ -4,8 +4,8 @@ use crate::adapters::protocol::dto::{
 };
 use crate::application::error::ApplicationError;
 
-use super::request_parser::RequestParser;
-use super::response_encoder::ResponseEncoder;
+use crate::adapters::protocol::parser::request_parser::RequestParser;
+use crate::adapters::protocol::parser::response_encoder::ResponseEncoder;
 
 #[derive(Clone)]
 pub struct KafkaProtocolParser {
