@@ -2,4 +2,4 @@ pub mod constants;
 pub mod dto;
 pub mod parser;
 
-pub use parser::kafka_protocol_parser::KafkaProtocolParser; 
+pub use parser::tcp_parser::KafkaProtocolParser;
