@@ -33,18 +33,6 @@ impl KafkaBroker {
         }
     }
 
-    fn convert_topic_id_to_uuid(topic_id: &[u8]) -> String {
-        let topic_id_hex = hex::encode(topic_id);
-        format!(
-            "{}-{}-{}-{}-{}",
-            &topic_id_hex[0..8],
-            &topic_id_hex[8..12],
-            &topic_id_hex[12..16],
-            &topic_id_hex[16..20],
-            &topic_id_hex[20..32]
-        )
-    }
-
     async fn handle_fetch_request(
         &self,
         request: &KafkaRequest,
@@ -53,7 +41,7 @@ impl KafkaBroker {
         if let RequestPayload::Fetch(fetch_request) = fetch_request {
             match fetch_request.topics.first() {
                 Some(first_topic) => {
-                    let topic_id = Self::convert_topic_id_to_uuid(&first_topic.topic_id);
+                    let topic_id = TopicMetadata::convert_topic_id_to_uuid(&first_topic.topic_id);
                     println!("[DEBUG] Looking for topic_id: {}", topic_id);
                     let topic_metadata = self
                         .metadata_store

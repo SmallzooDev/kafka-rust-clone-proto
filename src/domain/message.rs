@@ -14,6 +14,20 @@ pub struct TopicMetadata {
     pub topic_authorized_operations: i32,
 }
 
+impl TopicMetadata {
+    pub fn convert_topic_id_to_uuid(topic_id: &[u8]) -> String {
+        let topic_id_hex = hex::encode(topic_id);
+        format!(
+            "{}-{}-{}-{}-{}",
+            &topic_id_hex[0..8],
+            &topic_id_hex[8..12],
+            &topic_id_hex[12..16],
+            &topic_id_hex[16..20],
+            &topic_id_hex[20..32]
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Partition {
     pub error_code: i16,
