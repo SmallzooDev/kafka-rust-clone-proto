@@ -4,6 +4,7 @@ pub enum DomainError {
     InvalidProtocol(String),
     InvalidRequest,
     UnsupportedVersion,
+    StorageError(String),
 }
 
 impl std::fmt::Display for DomainError {
@@ -12,6 +13,7 @@ impl std::fmt::Display for DomainError {
             DomainError::InvalidProtocol(msg) => write!(f, "Protocol error: {}", msg),
             DomainError::InvalidRequest => write!(f, "Invalid request"),
             DomainError::UnsupportedVersion => write!(f, "Unsupported version"),
+            DomainError::StorageError(msg) => write!(f, "Storage error: {}", msg),
         }
     }
 }

@@ -14,6 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
+use crate::domain::error::DomainError;
 
 // 세그먼트 파일 관리를 위한 내부 구조체
 struct SegmentFiles {
@@ -22,10 +23,12 @@ struct SegmentFiles {
 }
 
 // 메모리 버퍼 관리를 위한 내부 구조체
-#[allow(dead_code)]
+#[derive(Debug)]
 struct MessageBuffer {
     messages: Vec<(u64, Bytes)>,
     last_flushed_offset: u64,
+    total_size: usize,       // 현재 사용 중인 메모리 크기
+    max_memory_size: usize,  // 최대 메모리 제한
 }
 
 impl MessageBuffer {
@@ -33,6 +36,35 @@ impl MessageBuffer {
         Self {
             messages: Vec::new(),
             last_flushed_offset: base_offset,
+            total_size: 0,
+            max_memory_size: 1024 * 1024 * 10, // 기본 10MB 제한
+        }
+    }
+
+    fn add_message(&mut self, offset: u64, data: Bytes) -> bool {
+        let message_size = data.len();
+        if self.total_size + message_size > self.max_memory_size {
+            return false; // 메모리 제한 초과
+        }
+
+        self.total_size += message_size;
+        self.messages.push((offset, data));
+        true
+    }
+
+    fn clear(&mut self) {
+        self.messages.clear();
+        self.total_size = 0;
+    }
+
+    fn is_full(&self) -> bool {
+        self.total_size >= self.max_memory_size
+    }
+
+    fn find_message(&self, target_offset: u64) -> Option<&Bytes> {
+        match self.messages.binary_search_by_key(&target_offset, |(offset, _)| *offset) {
+            Ok(idx) => Some(&self.messages[idx].1),
+            Err(_) => None,
         }
     }
 }
@@ -407,22 +439,39 @@ impl MessageStore for DiskMessageStore {
                 message.offset,
             )
             .await?;
+        
         let mut segment = segment.write().await;
-
-        // 새로운 오프셋 할당
         message.offset = segment.allocate_offset();
-
-        // 메모리 버퍼에 추가
-        segment
-            .buffer
-            .messages
-            .push((message.offset, Bytes::copy_from_slice(&message.payload)));
-
-        // 버퍼 크기가 임계값을 넘으면 플러시
-        if segment.buffer.messages.len() >= self.config.max_buffer_size {
+        
+        let message_bytes = Bytes::copy_from_slice(&message.payload);
+        
+        // 메모리 버퍼에 추가 시도
+        if !segment.buffer.add_message(message.offset, message_bytes.clone()) {
+            // 메모리 제한에 도달한 경우 먼저 플러시
             DiskMessageStore::flush_segment(&mut segment).await?;
+            
+            // 플러시 후 다시 시도
+            if !segment.buffer.add_message(message.offset, message_bytes) {
+                return Err(DomainError::StorageError("Message too large for buffer".to_string()).into());
+            }
         }
-
+        
+        // 버퍼가 가득 찼거나 설정된 크기에 도달하면 플러시
+        if segment.buffer.is_full() || segment.buffer.messages.len() >= self.config.max_buffer_size {
+            match DiskMessageStore::flush_segment(&mut segment).await {
+                Ok(_) => (),
+                Err(e) => {
+                    eprintln!("Flush failed: {:?}, retrying...", e);
+                    for _ in 0..3 {  // 최대 3번 재시도
+                        if DiskMessageStore::flush_segment(&mut segment).await.is_ok() {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+            }
+        }
+        
         Ok(message.offset)
     }
 
@@ -443,80 +492,73 @@ impl MessageStore for DiskMessageStore {
             .await?;
         let segment = segment.read().await;
 
-        // 먼저 메모리 버퍼에서 찾기
-        for (msg_offset, message_bytes) in &segment.buffer.messages {
-            if *msg_offset == offset as u64 {
-                return Ok(Some(message_bytes.to_vec()));
-            }
+        // 메모리 버퍼에서 이진 검색으로 찾기
+        if let Some(message_bytes) = segment.buffer.find_message(offset as u64) {
+            return Ok(Some(message_bytes.to_vec()));
         }
 
         // 디스크에서 찾기
         let base_offset = (offset as u64 / 1000) * 1000;
         let relative_offset = offset as u64 - base_offset;
 
-        // 인덱스 파일을 처음부터 읽기
+        // 인덱스 파일을 이진 검색으로 읽기
         let mut index_file = segment.files.index_file.try_clone().await?;
-        index_file.seek(SeekFrom::Start(0)).await?;
+        let file_size = index_file.metadata().await?.len();
+        let entry_size = 8; // 오프셋(4) + 위치(4)
+        let num_entries = file_size / entry_size;
 
-        // 인덱스에서 위치 찾기
-        loop {
+        let mut left = 0;
+        let mut right = num_entries;
+
+        while left < right {
+            let mid = left + (right - left) / 2;
+            index_file.seek(SeekFrom::Start(mid * entry_size)).await?;
+
             let mut entry = [0u8; 8];
-            match index_file.read_exact(&mut entry).await {
-                Ok(_) => {
-                    let idx_offset = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
-                    let pos = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]);
+            index_file.read_exact(&mut entry).await?;
+            let idx_offset = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
 
-                    if idx_offset as u64 >= relative_offset {
-                        // 찾은 위치에서 메시지 읽기
-                        let mut log_file = segment.files.log_file.try_clone().await?;
-                        log_file.seek(SeekFrom::Start(pos as u64)).await?;
+            if idx_offset as u64 == relative_offset {
+                let pos = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]);
+                
+                // 찾은 위치에서 메시지 읽기
+                let mut log_file = segment.files.log_file.try_clone().await?;
+                log_file.seek(SeekFrom::Start(pos as u64)).await?;
 
-                        // 오프셋 읽기 (8바이트)
-                        let mut offset_buf = [0u8; 8];
-                        log_file.read_exact(&mut offset_buf).await?;
+                // 메시지 읽기 로직 (기존 코드와 동일)
+                let mut offset_buf = [0u8; 8];
+                log_file.read_exact(&mut offset_buf).await?;
 
-                        // 메시지 크기 읽기 (4바이트)
-                        let mut size_buf = [0u8; 4];
-                        log_file.read_exact(&mut size_buf).await?;
-                        let _message_size = u32::from_be_bytes(size_buf);
+                let mut size_buf = [0u8; 4];
+                log_file.read_exact(&mut size_buf).await?;
+                let _message_size = u32::from_be_bytes(size_buf);
 
-                        // CRC32 건너뛰기 (4바이트)
-                        log_file.seek(SeekFrom::Current(4)).await?;
+                log_file.seek(SeekFrom::Current(4 + 2 + 8)).await?;  // CRC32 + 매직/속성 + 타임스탬프
 
-                        // 매직 넘버 (1바이트)와 속성 (1바이트) 건너뛰기
-                        log_file.seek(SeekFrom::Current(2)).await?;
-
-                        // 타임스탬프 건너뛰기 (8바이트)
-                        log_file.seek(SeekFrom::Current(8)).await?;
-
-                        // 키 길이 읽기 (4바이트)
-                        let mut key_size_buf = [0u8; 4];
-                        log_file.read_exact(&mut key_size_buf).await?;
-                        let key_size = i32::from_be_bytes(key_size_buf);
-                        
-                        // 키가 있다면 건너뛰기
-                        if key_size > 0 {
-                            log_file.seek(SeekFrom::Current(key_size as i64)).await?;
-                        }
-
-                        // 값 길이 읽기 (4바이트)
-                        let mut value_size_buf = [0u8; 4];
-                        log_file.read_exact(&mut value_size_buf).await?;
-                        let value_size = i32::from_be_bytes(value_size_buf);
-
-                        // 값 읽기
-                        let mut value_buf = vec![0u8; value_size as usize];
-                        log_file.read_exact(&mut value_buf).await?;
-
-                        return Ok(Some(value_buf));
-                    }
+                let mut key_size_buf = [0u8; 4];
+                log_file.read_exact(&mut key_size_buf).await?;
+                let key_size = i32::from_be_bytes(key_size_buf);
+                
+                if key_size > 0 {
+                    log_file.seek(SeekFrom::Current(key_size as i64)).await?;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    return Ok(None);
-                }
-                Err(e) => return Err(e.into()),
+
+                let mut value_size_buf = [0u8; 4];
+                log_file.read_exact(&mut value_size_buf).await?;
+                let value_size = i32::from_be_bytes(value_size_buf);
+
+                let mut value_buf = vec![0u8; value_size as usize];
+                log_file.read_exact(&mut value_buf).await?;
+
+                return Ok(Some(value_buf));
+            } else if idx_offset as u64 > relative_offset {
+                right = mid;
+            } else {
+                left = mid + 1;
             }
         }
+
+        Ok(None)
     }
 }
 
