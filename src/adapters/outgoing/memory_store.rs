@@ -13,6 +13,7 @@ pub struct MemoryMessageStore {
 }
 
 impl MemoryMessageStore {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             messages: Arc::new(RwLock::new(HashMap::new())),

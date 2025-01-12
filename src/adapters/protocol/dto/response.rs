@@ -1,6 +1,23 @@
-use crate::adapters::incoming::protocol::constants::{
+use crate::adapters::protocol::constants::{
     API_VERSIONS_KEY, DESCRIBE_TOPIC_PARTITIONS_KEY, FETCH_KEY, PRODUCE_KEY,
 };
+
+#[derive(Debug, Clone)]
+pub struct KafkaResponse {
+    pub correlation_id: i32,
+    pub error_code: i16,
+    pub payload: ResponsePayload,
+}
+
+impl KafkaResponse {
+    pub fn new(correlation_id: i32, error_code: i16, payload: ResponsePayload) -> Self {
+        Self {
+            correlation_id,
+            error_code,
+            payload,
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ApiVersion {
@@ -171,20 +188,4 @@ pub enum ResponsePayload {
     Produce(ProduceResponse),
 }
 
-#[derive(Debug, Clone)]
-pub struct KafkaResponse {
-    pub correlation_id: i32,
-    pub error_code: i16,
-    pub payload: ResponsePayload,
-}
-
-impl KafkaResponse {
-    pub fn new(correlation_id: i32, error_code: i16, payload: ResponsePayload) -> Self {
-        Self {
-            correlation_id,
-            error_code,
-            payload,
-        }
-    }
-}
 

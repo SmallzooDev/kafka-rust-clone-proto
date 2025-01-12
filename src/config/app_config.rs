@@ -1,4 +1,4 @@
-use crate::adapters::incoming::kafka_protocol_parser::KafkaProtocolParser;
+use crate::adapters::protocol::KafkaProtocolParser;
 use crate::adapters::outgoing::disk_store::DiskMessageStore;
 use crate::adapters::outgoing::kraft_metadata_store::KraftMetadataStore;
 use crate::application::broker::KafkaBroker;

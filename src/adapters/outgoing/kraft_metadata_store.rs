@@ -1,5 +1,5 @@
-use crate::adapters::incoming::protocol::dto::ErrorCode;
-use crate::adapters::outgoing::protocol::kraft_record::{RecordBatch, RecordValue};
+use crate::adapters::protocol::dto::ErrorCode;
+use crate::adapters::protocol::parser::kraft_record_parser::{RecordBatch, RecordValue};
 use crate::application::error::ApplicationError;
 use crate::domain::message::Partition;
 use crate::domain::message::TopicMetadata;

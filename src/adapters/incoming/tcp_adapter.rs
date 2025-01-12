@@ -1,4 +1,4 @@
-use crate::adapters::incoming::kafka_protocol_parser::KafkaProtocolParser;
+use crate::adapters::protocol::KafkaProtocolParser;
 use crate::application::ApplicationError;
 use crate::ports::incoming::message_handler::MessageHandler;
 use crate::Result;

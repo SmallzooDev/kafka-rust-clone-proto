@@ -1,8 +1,8 @@
-use crate::adapters::incoming::protocol::constants::{
+use crate::adapters::protocol::constants::{
     API_VERSIONS_KEY, DESCRIBE_TOPIC_PARTITIONS_KEY, FETCH_KEY, PRODUCE_KEY,
     UNKNOWN_TOPIC_OR_PARTITION, UNSUPPORTED_VERSION,
 };
-use crate::adapters::incoming::protocol::dto::{
+use crate::adapters::protocol::dto::{
     ApiVersionsResponse, DescribeTopicPartitionsResponse, ErrorCode, FetchResponse,
     FetchablePartitionResponse, FetchableTopicResponse, KafkaRequest, KafkaResponse,
     PartitionInfo, ProducePartitionResponse, ProduceResponse, ProduceTopicResponse, RequestPayload,
@@ -285,7 +285,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::adapters::incoming::protocol::dto::{
+    use crate::adapters::protocol::dto::{
         DescribeTopicPartitionsRequest, RequestHeader, TopicRequest,
     };
     use crate::domain::message::{KafkaMessage, TopicMetadata};

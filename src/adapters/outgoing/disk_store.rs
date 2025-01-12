@@ -22,6 +22,7 @@ struct SegmentFiles {
 }
 
 // 메모리 버퍼 관리를 위한 내부 구조체
+#[allow(dead_code)]
 struct MessageBuffer {
     messages: Vec<(u64, Bytes)>,
     last_flushed_offset: u64,
@@ -73,6 +74,7 @@ struct SegmentCache {
 }
 
 // 플러시 작업을 위한 메시지 타입
+#[allow(dead_code)]
 enum FlushMessage {
     Flush(TopicPartition, u64), // (topic_partition, base_offset)
     Shutdown,
@@ -122,8 +124,8 @@ impl DiskMessageStore {
                     _ = interval.tick() => {
                         // 주기적인 플러시
                         let segments_guard = segments.read().await;
-                        for (topic_partition, cache) in segments_guard.iter() {
-                            for (base_offset, segment) in cache.segments.iter() {
+                        for (_topic_partition, cache) in segments_guard.iter() {
+                            for (_base_offset, segment) in cache.segments.iter() {
                                 let mut segment = segment.write().await;
                                 if let Err(e) = DiskMessageStore::flush_segment(&mut segment).await {
                                     eprintln!("Error flushing segment: {:?}", e);
@@ -364,6 +366,7 @@ impl DiskMessageStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     async fn cleanup(&self) -> Result<()> {
         self.is_running.store(false, Ordering::SeqCst);
         let _ = self.flush_sender.send(FlushMessage::Shutdown).await;
@@ -475,7 +478,7 @@ impl MessageStore for DiskMessageStore {
                         // 메시지 크기 읽기 (4바이트)
                         let mut size_buf = [0u8; 4];
                         log_file.read_exact(&mut size_buf).await?;
-                        let message_size = u32::from_be_bytes(size_buf);
+                        let _message_size = u32::from_be_bytes(size_buf);
 
                         // CRC32 건너뛰기 (4바이트)
                         log_file.seek(SeekFrom::Current(4)).await?;

@@ -37,6 +37,7 @@ fn print_test_summary(test_name: &str, total_messages: usize, successful_message
     println!("Total duration: {:?}", duration);
 }
 
+#[allow(dead_code)]
 fn print_buffer_summary(buffer_size: usize, next_offset: u64, flushed_count: usize) {
     println!("\n=== Buffer Status ===");
     println!("Current size: {} dto", buffer_size);

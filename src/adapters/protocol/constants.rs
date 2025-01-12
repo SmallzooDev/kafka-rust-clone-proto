@@ -23,7 +23,7 @@ pub const PRODUCE_MAX_VERSION: i16 = 9;
 /// DescribeTopicPartitions API의 키 값
 /// Kafka 프로토콜에서 정의된 표준 API 키임
 /// 클라이언트가 브로커가 지원하는 API 버전을 조회할 때 사용함
-pub const DESCRIBE_TOPIC_PARTITIONS_KEY: i16 = 75;
+pub const DESCRIBE_TOPIC_PARTITIONS_KEY: i16 = 24;
 
 /// DescribeTopicPartitions API는 버전 0만 지원
 #[allow(dead_code)]

@@ -1,4 +1,4 @@
-use crate::adapters::incoming::protocol::constants::{
+use crate::adapters::protocol::constants::{
     API_VERSIONS_KEY,
     DESCRIBE_TOPIC_PARTITIONS_KEY,
     FETCH_KEY,
