@@ -292,9 +292,6 @@ impl DiskMessageStore {
 
     async fn write_message(file: &mut File, message: &KafkaMessage) -> Result<u64> {
         let position = file.metadata().await?.len();
-        println!("\n=== Writing Message to Disk ===");
-        println!("Position: {}", position);
-        println!("Offset: {}", message.offset);
 
         let mut buffer = BytesMut::new();
 
@@ -327,9 +324,6 @@ impl DiskMessageStore {
         let message_size = buffer.len() - 12;
         buffer[8..12].copy_from_slice(&(message_size as u32).to_be_bytes());
 
-        println!("Message Size: {} bytes", message_size);
-        println!("Total Buffer Size: {} bytes", buffer.len());
-
         file.write_all(&buffer).await?;
 
         Ok(position)
@@ -339,10 +333,6 @@ impl DiskMessageStore {
         if segment.buffer.messages.is_empty() {
             return Ok(());
         }
-
-        println!("\n=== Flushing Segment ===");
-        println!("Base Offset: {}", segment.base_offset);
-        println!("Messages to Flush: {}", segment.buffer.messages.len());
 
         // 버퍼의 메시지들을 디스크에 쓰기
         for (offset, message_bytes) in segment.buffer.messages.drain(..) {
@@ -365,18 +355,12 @@ impl DiskMessageStore {
             ]
             .concat();
             segment.files.index_file.write_all(&index_entry).await?;
-
-            println!(
-                "Flushed Message - Offset: {}, Position: {}",
-                offset, position
-            );
         }
 
         // 디스크 동기화
         segment.files.log_file.sync_data().await?;
         segment.files.index_file.sync_data().await?;
 
-        println!("=== Flush Complete ===\n");
         Ok(())
     }
 
@@ -411,14 +395,6 @@ impl Drop for DiskMessageStore {
 #[async_trait]
 impl MessageStore for DiskMessageStore {
     async fn store_message(&self, mut message: KafkaMessage) -> Result<u64> {
-        println!("\n=== Producer Request ===");
-        println!("Topic: {}, Partition: {}", message.topic, message.partition);
-        println!("Message Size: {} bytes", message.payload.len());
-        println!(
-            "Message Content: {:?}",
-            String::from_utf8_lossy(&message.payload)
-        );
-
         let segment = self
             .get_or_create_segment(
                 &TopicPartition {
@@ -439,17 +415,11 @@ impl MessageStore for DiskMessageStore {
             .messages
             .push((message.offset, Bytes::copy_from_slice(&message.payload)));
 
-        println!("\n=== Memory Buffer Status ===");
-        println!("Buffer Size: {} messages", segment.buffer.messages.len());
-        println!("Next Offset: {}", segment.next_offset);
-
         // 버퍼 크기가 임계값을 넘으면 플러시
         if segment.buffer.messages.len() >= self.config.max_buffer_size {
-            println!("\n=== Flushing Buffer (Size Limit Reached) ===");
             DiskMessageStore::flush_segment(&mut segment).await?;
         }
 
-        println!("=== Request Complete ===\n");
         Ok(message.offset)
     }
 
@@ -459,12 +429,6 @@ impl MessageStore for DiskMessageStore {
         partition: i32,
         offset: i64,
     ) -> Result<Option<Vec<u8>>> {
-        println!("\n=== Reading Message ===");
-        println!(
-            "Topic: {}, Partition: {}, Offset: {}",
-            topic_id, partition, offset
-        );
-
         let segment = self
             .get_or_create_segment(
                 &TopicPartition {
@@ -477,23 +441,15 @@ impl MessageStore for DiskMessageStore {
         let segment = segment.read().await;
 
         // 먼저 메모리 버퍼에서 찾기
-        println!("Checking Memory Buffer...");
         for (msg_offset, message_bytes) in &segment.buffer.messages {
             if *msg_offset == offset as u64 {
-                println!("Found in Memory Buffer!");
                 return Ok(Some(message_bytes.to_vec()));
             }
         }
-        println!("Not found in Memory Buffer");
 
         // 디스크에서 찾기
-        println!("Checking Disk...");
         let base_offset = (offset as u64 / 1000) * 1000;
         let relative_offset = offset as u64 - base_offset;
-        println!(
-            "Base Offset: {}, Relative Offset: {}",
-            base_offset, relative_offset
-        );
 
         // 인덱스 파일을 처음부터 읽기
         let mut index_file = segment.files.index_file.try_clone().await?;
@@ -506,28 +462,53 @@ impl MessageStore for DiskMessageStore {
                 Ok(_) => {
                     let idx_offset = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
                     let pos = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]);
-                    println!("Index Entry - Offset: {}, Position: {}", idx_offset, pos);
 
                     if idx_offset as u64 >= relative_offset {
-                        println!("Found matching index entry!");
                         // 찾은 위치에서 메시지 읽기
                         let mut log_file = segment.files.log_file.try_clone().await?;
                         log_file.seek(SeekFrom::Start(pos as u64)).await?;
 
+                        // 오프셋 읽기 (8바이트)
+                        let mut offset_buf = [0u8; 8];
+                        log_file.read_exact(&mut offset_buf).await?;
+
+                        // 메시지 크기 읽기 (4바이트)
                         let mut size_buf = [0u8; 4];
                         log_file.read_exact(&mut size_buf).await?;
                         let message_size = u32::from_be_bytes(size_buf);
-                        println!("Message Size from Log: {} bytes", message_size);
 
-                        let mut message_buf = vec![0u8; message_size as usize];
-                        log_file.read_exact(&mut message_buf).await?;
-                        println!("Successfully read message from disk");
+                        // CRC32 건너뛰기 (4바이트)
+                        log_file.seek(SeekFrom::Current(4)).await?;
 
-                        return Ok(Some(message_buf));
+                        // 매직 넘버 (1바이트)와 속성 (1바이트) 건너뛰기
+                        log_file.seek(SeekFrom::Current(2)).await?;
+
+                        // 타임스탬프 건너뛰기 (8바이트)
+                        log_file.seek(SeekFrom::Current(8)).await?;
+
+                        // 키 길이 읽기 (4바이트)
+                        let mut key_size_buf = [0u8; 4];
+                        log_file.read_exact(&mut key_size_buf).await?;
+                        let key_size = i32::from_be_bytes(key_size_buf);
+                        
+                        // 키가 있다면 건너뛰기
+                        if key_size > 0 {
+                            log_file.seek(SeekFrom::Current(key_size as i64)).await?;
+                        }
+
+                        // 값 길이 읽기 (4바이트)
+                        let mut value_size_buf = [0u8; 4];
+                        log_file.read_exact(&mut value_size_buf).await?;
+                        let value_size = i32::from_be_bytes(value_size_buf);
+
+                        // 값 읽기
+                        let mut value_buf = vec![0u8; value_size as usize];
+                        log_file.read_exact(&mut value_buf).await?;
+
+                        return Ok(Some(value_buf));
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    println!("Reached end of index file without finding offset");
                     return Ok(None);
                 }
                 Err(e) => return Err(e.into()),

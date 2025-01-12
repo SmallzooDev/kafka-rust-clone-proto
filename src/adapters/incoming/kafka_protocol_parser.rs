@@ -57,10 +57,8 @@ impl KafkaProtocolParser {
             let client_id = String::from_utf8(client_id_bytes.to_vec()).map_err(|_| {
                 ApplicationError::Protocol("Invalid client ID encoding".to_string())
             })?;
-            println!("[REQUEST] Client ID: {}", client_id);
             Some(client_id)
         } else {
-            println!("[REQUEST] Client ID: None");
             None
         };
 
@@ -78,18 +76,12 @@ impl KafkaProtocolParser {
             API_VERSIONS_KEY => RequestPayload::ApiVersions,
             PRODUCE_KEY => {
                 let acks = buf.get_i16();
-                println!("[REQUEST] Acks: {}", acks);
-
                 let timeout_ms = buf.get_i32();
-                println!("[REQUEST] Timeout MS: {}", timeout_ms);
-
                 let topics_length = buf.get_i8() - 1;
-                println!("[REQUEST] Topics Length: {}", topics_length);
 
                 let mut topic_data = Vec::new();
                 for _ in 0..topics_length {
                     let name_length = buf.get_i8() - 1;
-                    println!("[REQUEST] Topic Name Length: {}", name_length);
 
                     let mut topic_name_buf = vec![0u8; name_length as usize];
                     let bytes_to_copy = buf.copy_to_bytes(name_length as usize);
@@ -97,21 +89,12 @@ impl KafkaProtocolParser {
                     let topic_name = String::from_utf8(topic_name_buf).map_err(|_| {
                         ApplicationError::Protocol("Invalid topic name encoding".to_string())
                     })?;
-                    println!("[REQUEST] Topic Name: {}", topic_name);
-
                     let partitions_length = buf.get_i8() - 1;
-                    println!("[REQUEST] Partitions Length: {}", partitions_length);
-
                     let mut partition_data = Vec::new();
                     for _ in 0..partitions_length {
                         let partition = buf.get_i32();
-                        println!("[REQUEST] Partition: {}", partition);
-
                         let records_length = buf.get_i32() as usize;
-                        println!("[REQUEST] Records Length: {}", records_length);
-
                         let records = buf.copy_to_bytes(records_length).to_vec();
-                        println!("[REQUEST] Records: {:02x?}", records);
 
                         partition_data.push(ProducePartitionData { partition, records });
                     }
@@ -135,40 +118,30 @@ impl KafkaProtocolParser {
             FETCH_KEY => {
                 // max_wait_ms
                 let max_wait_ms = buf.get_i32();
-                println!("[REQUEST] Max Wait MS: {}", max_wait_ms);
 
                 // min_bytes
                 let min_bytes = buf.get_i32();
-                println!("[REQUEST] Min Bytes: {}", min_bytes);
 
                 // max_bytes
                 let max_bytes = buf.get_i32();
-                println!("[REQUEST] Max Bytes: {}", max_bytes);
 
                 // isolation_level
                 let isolation_level = buf.get_i8();
-                println!("[REQUEST] Isolation Level: {}", isolation_level);
 
                 // session_id
                 let session_id = buf.get_i32();
-                println!("[REQUEST] Session ID: {}", session_id);
 
                 // session_epoch
                 let session_epoch = buf.get_i32();
-                println!("[REQUEST] Session Epoch: {}", session_epoch);
 
                 // topics array length (COMPACT_ARRAY)
                 let topics_length = buf.get_i8() - 1;
-                println!("[REQUEST] Topics Length: {}", topics_length);
 
                 let mut topics = Vec::new();
                 for _ in 0..topics_length {
-                    // topic_id
                     let mut topic_id = [0u8; 16];
                     topic_id.copy_from_slice(&buf.copy_to_bytes(16));
-                    println!("[REQUEST] Topic ID: {:02x?}", topic_id);
 
-                    // partitions array length (COMPACT_ARRAY)
                     let partitions_length = buf.get_i8() - 1;
                     println!("[REQUEST] Partitions Length: {}", partitions_length);
 
@@ -246,7 +219,6 @@ impl KafkaProtocolParser {
                         let byte = buf.get_u8();
                         name_length_buf[pos] = byte;
                         pos += 1;
-                        println!("[REQUEST] Name length byte {}: {:02x}", pos, byte);
 
                         if byte & 0x80 == 0 {
                             break;
@@ -254,7 +226,6 @@ impl KafkaProtocolParser {
                     }
 
                     let name_length = decode_varint(&name_length_buf[..pos]) - 1;
-                    println!("[REQUEST] Name length (decoded): {}", name_length);
 
                     let mut topic_name_buf = vec![0u8; name_length as usize];
                     if name_length as usize > buf.len() {
