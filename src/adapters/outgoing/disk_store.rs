@@ -23,12 +23,12 @@ struct SegmentFiles {
 }
 
 // 메모리 버퍼 관리를 위한 내부 구조체
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct MessageBuffer {
-    messages: Vec<(u64, Bytes)>,
+    messages: Vec<(u64, KafkaMessage)>,
     last_flushed_offset: u64,
-    total_size: usize,       // 현재 사용 중인 메모리 크기
-    max_memory_size: usize,  // 최대 메모리 제한
+    total_size: usize,
+    max_memory_size: usize,
 }
 
 impl MessageBuffer {
@@ -41,14 +41,14 @@ impl MessageBuffer {
         }
     }
 
-    fn add_message(&mut self, offset: u64, data: Bytes) -> bool {
-        let message_size = data.len();
+    fn add_message(&mut self, offset: u64, message: KafkaMessage) -> bool {
+        let message_size = message.payload.len();
         if self.total_size + message_size > self.max_memory_size {
             return false; // 메모리 제한 초과
         }
 
         self.total_size += message_size;
-        self.messages.push((offset, data));
+        self.messages.push((offset, message));
         true
     }
 
@@ -61,9 +61,9 @@ impl MessageBuffer {
         self.total_size >= self.max_memory_size
     }
 
-    fn find_message(&self, target_offset: u64) -> Option<&Bytes> {
+    fn find_message(&self, target_offset: u64) -> Option<&Vec<u8>> {
         match self.messages.binary_search_by_key(&target_offset, |(offset, _)| *offset) {
-            Ok(idx) => Some(&self.messages[idx].1),
+            Ok(idx) => Some(&self.messages[idx].1.payload),
             Err(_) => None,
         }
     }
@@ -325,7 +325,9 @@ impl DiskMessageStore {
     }
 
     async fn write_message(file: &mut File, message: &KafkaMessage) -> Result<u64> {
-        let position = file.metadata().await?.len();
+        // 현재 파일 위치 저장
+        let position = file.seek(SeekFrom::End(0)).await?;
+        println!("Writing message at position: {}", position);
 
         let mut buffer = BytesMut::new();
 
@@ -359,6 +361,7 @@ impl DiskMessageStore {
         buffer[8..12].copy_from_slice(&(message_size as u32).to_be_bytes());
 
         file.write_all(&buffer).await?;
+        file.sync_data().await?;
 
         Ok(position)
     }
@@ -368,26 +371,19 @@ impl DiskMessageStore {
             return Ok(());
         }
 
-        // 버퍼의 메시지들을 디스크에 쓰기
-        for (offset, message_bytes) in segment.buffer.messages.drain(..) {
-            let message = KafkaMessage {
-                correlation_id: 0,
-                topic: String::new(),
-                partition: 0,
-                offset,
-                timestamp: 0,
-                payload: message_bytes.to_vec(),
-            };
+        // 버퍼의 메시지들을 오프셋 순으로 정렬
+        segment.buffer.messages.sort_by_key(|(offset, _)| *offset);
 
+        // 버퍼의 메시지들을 디스크에 쓰기
+        for (offset, message) in segment.buffer.messages.drain(..) {
             let position = Self::write_message(&mut segment.files.log_file, &message).await?;
+            println!("Writing index entry - Offset: {}, Position: {}", offset - segment.base_offset, position);
 
             // 인덱스 엔트리 쓰기
             let relative_offset = offset - segment.base_offset;
-            let index_entry = [
-                (relative_offset as u32).to_be_bytes(),
-                (position as u32).to_be_bytes(),
-            ]
-            .concat();
+            let mut index_entry = Vec::with_capacity(8);
+            index_entry.extend_from_slice(&(relative_offset as u32).to_be_bytes());
+            index_entry.extend_from_slice(&(position as u32).to_be_bytes());
             segment.files.index_file.write_all(&index_entry).await?;
         }
 
@@ -429,7 +425,7 @@ impl Drop for DiskMessageStore {
 
 #[async_trait]
 impl MessageStore for DiskMessageStore {
-    async fn store_message(&self, mut message: KafkaMessage) -> Result<u64> {
+    async fn store_message(&self, message: KafkaMessage) -> Result<u64> {
         let segment = self
             .get_or_create_segment(
                 &TopicPartition {
@@ -441,17 +437,17 @@ impl MessageStore for DiskMessageStore {
             .await?;
         
         let mut segment = segment.write().await;
-        message.offset = segment.allocate_offset();
-        
-        let message_bytes = Bytes::copy_from_slice(&message.payload);
+        let new_offset = segment.allocate_offset();
+        let mut message = message.clone();
+        message.offset = new_offset;
         
         // 메모리 버퍼에 추가 시도
-        if !segment.buffer.add_message(message.offset, message_bytes.clone()) {
+        if !segment.buffer.add_message(new_offset, message.clone()) {
             // 메모리 제한에 도달한 경우 먼저 플러시
             DiskMessageStore::flush_segment(&mut segment).await?;
             
             // 플러시 후 다시 시도
-            if !segment.buffer.add_message(message.offset, message_bytes) {
+            if !segment.buffer.add_message(new_offset, message) {
                 return Err(DomainError::StorageError("Message too large for buffer".to_string()).into());
             }
         }
@@ -472,7 +468,7 @@ impl MessageStore for DiskMessageStore {
             }
         }
         
-        Ok(message.offset)
+        Ok(new_offset)
     }
 
     async fn read_messages(
@@ -492,6 +488,7 @@ impl MessageStore for DiskMessageStore {
             .await?;
         let segment = segment.read().await;
 
+
         // 메모리 버퍼에서 이진 검색으로 찾기
         if let Some(message_bytes) = segment.buffer.find_message(offset as u64) {
             return Ok(Some(message_bytes.to_vec()));
@@ -507,31 +504,39 @@ impl MessageStore for DiskMessageStore {
         let entry_size = 8; // 오프셋(4) + 위치(4)
         let num_entries = file_size / entry_size;
 
-        let mut left = 0;
-        let mut right = num_entries;
+        if num_entries == 0 {
+            return Ok(None);
+        }
 
-        while left < right {
+        let mut left = 0;
+        let mut right = num_entries - 1;  // num_entries - 1로 수정
+
+
+        while left <= right {
             let mid = left + (right - left) / 2;
+
             index_file.seek(SeekFrom::Start(mid * entry_size)).await?;
 
             let mut entry = [0u8; 8];
             index_file.read_exact(&mut entry).await?;
             let idx_offset = u32::from_be_bytes([entry[0], entry[1], entry[2], entry[3]]);
+            let pos = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]);
+
 
             if idx_offset as u64 == relative_offset {
-                let pos = u32::from_be_bytes([entry[4], entry[5], entry[6], entry[7]]);
-                
+
                 // 찾은 위치에서 메시지 읽기
                 let mut log_file = segment.files.log_file.try_clone().await?;
                 log_file.seek(SeekFrom::Start(pos as u64)).await?;
 
-                // 메시지 읽기 로직 (기존 코드와 동일)
+                // 메시지 읽기 로직
                 let mut offset_buf = [0u8; 8];
                 log_file.read_exact(&mut offset_buf).await?;
+                let stored_offset = i64::from_be_bytes(offset_buf);
 
                 let mut size_buf = [0u8; 4];
                 log_file.read_exact(&mut size_buf).await?;
-                let _message_size = u32::from_be_bytes(size_buf);
+                let message_size = u32::from_be_bytes(size_buf);
 
                 log_file.seek(SeekFrom::Current(4 + 2 + 8)).await?;  // CRC32 + 매직/속성 + 타임스탬프
 
@@ -552,7 +557,10 @@ impl MessageStore for DiskMessageStore {
 
                 return Ok(Some(value_buf));
             } else if idx_offset as u64 > relative_offset {
-                right = mid;
+                if mid == 0 {
+                    break;
+                }
+                right = mid - 1;
             } else {
                 left = mid + 1;
             }

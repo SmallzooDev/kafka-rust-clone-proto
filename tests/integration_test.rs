@@ -4,7 +4,8 @@ use kafka_starter_rust::{
 };
 use std::time::Duration;
 use tempfile::TempDir;
-use tokio::fs;
+use tokio::fs::{self, File};
+use tokio::io::AsyncReadExt;
 use std::sync::Arc;
 use kafka_starter_rust::domain::message::KafkaMessage;
 
@@ -645,5 +646,105 @@ async fn test_protocol_compliance() {
         .expect("Failed to read empty message");
     assert!(read_result.is_some());
     assert_eq!(read_result.unwrap(), vec![]);
+}
+
+#[tokio::test]
+async fn test_message_log_persistence() -> Result<()> {
+    print_test_header("Message Log Persistence Test");
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let config = StoreConfig {
+        max_segment_size: 1024,
+        max_buffer_size: 2,
+        flush_interval: Duration::from_millis(100),
+    };
+
+    let store = DiskMessageStore::new(temp_dir.path().to_path_buf(), config);
+
+    // 테스트 메시지들 준비
+    let test_messages = vec![
+        KafkaMessage {
+            correlation_id: 1,
+            topic: "test-topic".to_string(),
+            partition: 0,
+            offset: 0,
+            timestamp: 1234567890,
+            payload: "First message".as_bytes().to_vec(),
+        },
+        KafkaMessage {
+            correlation_id: 2,
+            topic: "test-topic".to_string(),
+            partition: 0,
+            offset: 0,
+            timestamp: 1234567891,
+            payload: "Second message".as_bytes().to_vec(),
+        },
+        KafkaMessage {
+            correlation_id: 3,
+            topic: "test-topic".to_string(),
+            partition: 0,
+            offset: 0,
+            timestamp: 1234567892,
+            payload: "Third message".as_bytes().to_vec(),
+        },
+    ];
+
+    println!("\n=== 메시지 저장 시작 ===");
+    let mut stored_offsets = Vec::new();
+    for (i, message) in test_messages.iter().enumerate() {
+        print_message_details(&format!("저장할 메시지 {}", i + 1), message);
+        let offset = store.store_message(message.clone()).await?;
+        stored_offsets.push(offset);
+        println!("메시지 {} 저장됨, 오프셋: {}", i + 1, offset);
+    }
+
+    // 버퍼가 디스크에 플러시되도록 잠시 대기
+    println!("\n버퍼 플러시 대기 중...");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // 로그 파일 확인
+    let topic_dir = temp_dir.path().join("test-topic-0");
+    let base_offset = (stored_offsets[0] / 1000) * 1000;
+    let log_file = topic_dir.join(format!("{:020}.log", base_offset));
+    let index_file = topic_dir.join(format!("{:020}.index", base_offset));
+
+    println!("\n=== 로그 파일 정보 ===");
+    println!("로그 파일 경로: {:?}", log_file);
+    println!("인덱스 파일 경로: {:?}", index_file);
+
+    assert!(log_file.exists(), "로그 파일이 존재해야 함");
+    assert!(index_file.exists(), "인덱스 파일이 존재해야 함");
+
+    let log_metadata = fs::metadata(&log_file).await?;
+    let index_metadata = fs::metadata(&index_file).await?;
+    println!("로그 파일 크기: {} bytes", log_metadata.len());
+    println!("인덱스 파일 크기: {} bytes", index_metadata.len());
+
+    // 저장된 메시지 읽기 및 검증
+    println!("\n=== 저장된 메시지 검증 ===");
+    for (i, offset) in stored_offsets.iter().enumerate() {
+        let read_result = store
+            .read_messages("test-topic", 0, *offset as i64)
+            .await?;
+        
+        match read_result {
+            Some(data) => {
+                println!("\n메시지 {} (오프셋 {}):", i + 1, offset);
+                println!("원본 메시지: {:?}", String::from_utf8_lossy(&test_messages[i].payload));
+                println!("읽은 메시지: {:?}", String::from_utf8_lossy(&data));
+                assert_eq!(&data, &test_messages[i].payload, "메시지 내용이 일치해야 함");
+            }
+            None => panic!("메시지를 찾을 수 없음: offset {}", offset),
+        }
+    }
+
+    // 로그 파일 내용 직접 확인 (처음 100바이트만)
+    println!("\n=== 로그 파일 원시 내용 ===");
+    let mut log_file = File::open(&log_file).await?;
+    let mut buffer = vec![0u8; 100];
+    let n = log_file.read(&mut buffer).await?;
+    println!("처음 {} 바이트: {:?}", n, &buffer[..n]);
+
+    Ok(())
 }
 
