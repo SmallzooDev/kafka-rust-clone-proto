@@ -532,11 +532,11 @@ impl MessageOutgoingPort for DiskMessageStore {
                 // 메시지 읽기 로직
                 let mut offset_buf = [0u8; 8];
                 log_file.read_exact(&mut offset_buf).await?;
-                let stored_offset = i64::from_be_bytes(offset_buf);
+                let _stored_offset = i64::from_be_bytes(offset_buf);
 
                 let mut size_buf = [0u8; 4];
                 log_file.read_exact(&mut size_buf).await?;
-                let message_size = u32::from_be_bytes(size_buf);
+                let _message_size = u32::from_be_bytes(size_buf);
 
                 log_file.seek(SeekFrom::Current(4 + 2 + 8)).await?;  // CRC32 + 매직/속성 + 타임스탬프
 
