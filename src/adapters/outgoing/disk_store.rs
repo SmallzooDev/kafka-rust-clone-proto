@@ -1,10 +1,11 @@
-use crate::domain::message::KafkaMessage;
 use crate::config::app_config::StoreConfig;
+use crate::domain::error::DomainError;
+use crate::domain::message::KafkaMessage;
 use crate::domain::message::TopicPartition;
 use crate::ports::outgoing::message_outgoing_port::MessageOutgoingPort;
 use crate::Result;
 use async_trait::async_trait;
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +15,6 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio::time::{interval, Duration};
-use crate::domain::error::DomainError;
 
 // 세그먼트 파일 관리를 위한 내부 구조체
 struct SegmentFiles {
