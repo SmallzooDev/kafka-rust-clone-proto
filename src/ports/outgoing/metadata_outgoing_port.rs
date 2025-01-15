@@ -3,7 +3,7 @@ use crate::Result;
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait MetadataStore: Send + Sync {
+pub trait MetadataOutgoingPort: Send + Sync {
     async fn get_topic_metadata_by_names(
         &self,
         topic_names: Vec<String>,

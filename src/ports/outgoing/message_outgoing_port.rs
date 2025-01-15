@@ -3,7 +3,7 @@ use crate::Result;
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait MessageStore: Send + Sync {
+pub trait MessageOutgoingPort: Send + Sync {
     async fn store_message(&self, message: KafkaMessage) -> Result<u64>;
 
     async fn read_messages(

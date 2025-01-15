@@ -2,7 +2,7 @@ use crate::adapters::protocol::dto::ErrorCode;
 use crate::adapters::protocol::kraft_record_parser::KraftRecordParser;
 use crate::application::error::ApplicationError;
 use crate::domain::message::TopicMetadata;
-use crate::ports::outgoing::metadata_store::MetadataStore;
+use crate::ports::outgoing::metadata_outgoing_port::MetadataOutgoingPort;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ pub struct KraftMetadataStore {
 }
 
 #[async_trait]
-impl MetadataStore for KraftMetadataStore {
+impl MetadataOutgoingPort for KraftMetadataStore {
     async fn get_topic_metadata_by_names(
         &self,
         topic_names: Vec<String>,

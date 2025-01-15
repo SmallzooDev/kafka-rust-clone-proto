@@ -1,6 +1,6 @@
 use crate::adapters::protocol::KafkaProtocolParser;
 use crate::application::ApplicationError;
-use crate::ports::incoming::message_handler::MessageHandler;
+use crate::ports::incoming::broker_incoming_port::BrokerIncomingPort;
 use crate::Result;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -8,14 +8,14 @@ use tokio::net::{TcpListener, TcpStream};
 
 pub struct TcpAdapter {
     listener: TcpListener,
-    message_handler: Arc<dyn MessageHandler>,
+    broker_incoming_port: Arc<dyn BrokerIncomingPort>,
     protocol_parser: KafkaProtocolParser,
 }
 
 impl TcpAdapter {
     pub async fn new(
         addr: &str,
-        message_handler: Arc<dyn MessageHandler>,
+        broker_incoming_port: Arc<dyn BrokerIncomingPort>,
         protocol_parser: KafkaProtocolParser,
     ) -> Result<Self> {
         let listener = TcpListener::bind(addr)
@@ -23,7 +23,7 @@ impl TcpAdapter {
             .map_err(ApplicationError::Io)?;
         Ok(Self {
             listener,
-            message_handler,
+            broker_incoming_port,
             protocol_parser,
         })
     }
@@ -34,7 +34,7 @@ impl TcpAdapter {
         loop {
             match self.listener.accept().await {
                 Ok((stream, _)) => {
-                    let message_handler = Arc::clone(&self.message_handler);
+                    let message_handler = Arc::clone(&self.broker_incoming_port);
                     let protocol_parser = self.protocol_parser.clone();
 
                     tokio::spawn(async move {
@@ -53,7 +53,7 @@ impl TcpAdapter {
 
 async fn handle_connection(
     mut stream: TcpStream,
-    message_handler: Arc<dyn MessageHandler>,
+    broker_incoming_port: Arc<dyn BrokerIncomingPort>,
     protocol_parser: KafkaProtocolParser,
 ) -> Result<()> {
     println!("Accepted new connection");
@@ -81,7 +81,7 @@ async fn handle_connection(
         let request = protocol_parser.parse_request(&request_data)?;
 
         // 4. 비즈니스 로직 처리
-        let response = message_handler.handle_request(request).await?;
+        let response = broker_incoming_port.handle_request(request).await?;
 
         // 5. 응답 인코딩 및 전송
         let encoded = protocol_parser.encode_response(response);

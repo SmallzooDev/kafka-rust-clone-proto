@@ -1,7 +1,7 @@
 use crate::domain::message::KafkaMessage;
 use crate::config::app_config::StoreConfig;
 use crate::domain::message::TopicPartition;
-use crate::ports::outgoing::message_store::MessageStore;
+use crate::ports::outgoing::message_outgoing_port::MessageOutgoingPort;
 use crate::Result;
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -424,7 +424,7 @@ impl Drop for DiskMessageStore {
 }
 
 #[async_trait]
-impl MessageStore for DiskMessageStore {
+impl MessageOutgoingPort for DiskMessageStore {
     async fn store_message(&self, message: KafkaMessage) -> Result<u64> {
         let segment = self
             .get_or_create_segment(

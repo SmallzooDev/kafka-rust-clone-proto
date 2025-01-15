@@ -1,8 +1,8 @@
 use crate::adapters::protocol::KafkaProtocolParser;
 use crate::adapters::outgoing::disk_store::DiskMessageStore;
 use crate::adapters::outgoing::kraft_metadata_store::KraftMetadataStore;
-use crate::application::broker::KafkaBroker;
-use crate::ports::incoming::message_handler::MessageHandler;
+use crate::application::broker_service::BrokerService;
+use crate::ports::incoming::broker_incoming_port::BrokerIncomingPort;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +27,7 @@ impl Default for StoreConfig {
 #[allow(dead_code)]
 pub struct AppConfig {
     pub store_config: StoreConfig,
-    pub broker: Arc<dyn MessageHandler>,
+    pub broker: Arc<dyn BrokerIncomingPort>,
     pub protocol_parser: KafkaProtocolParser,
 }
 
@@ -41,7 +41,7 @@ impl AppConfig {
         let metadata_store = Box::new(KraftMetadataStore::new(log_dir));
 
         // Initialize broker with both stores
-        let broker = Arc::new(KafkaBroker::new(message_store, metadata_store));
+        let broker = Arc::new(BrokerService::new(message_store, metadata_store));
         let protocol_parser = KafkaProtocolParser::new();
 
         Self {

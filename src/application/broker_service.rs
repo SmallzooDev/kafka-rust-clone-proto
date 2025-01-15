@@ -9,23 +9,23 @@ use crate::adapters::protocol::dto::{
     ResponsePayload, TopicResponse,
 };
 use crate::domain::message::{KafkaMessage, TopicMetadata};
-use crate::ports::incoming::message_handler::MessageHandler;
-use crate::ports::outgoing::message_store::MessageStore;
-use crate::ports::outgoing::metadata_store::MetadataStore;
+use crate::ports::incoming::broker_incoming_port::BrokerIncomingPort;
+use crate::ports::outgoing::message_outgoing_port::MessageOutgoingPort;
+use crate::ports::outgoing::metadata_outgoing_port::MetadataOutgoingPort;
 use crate::Result;
 use async_trait::async_trait;
 use hex;
 
 #[allow(dead_code)]
-pub struct KafkaBroker {
-    message_store: Box<dyn MessageStore>,
-    metadata_store: Box<dyn MetadataStore>,
+pub struct BrokerService {
+    message_store: Box<dyn MessageOutgoingPort>,
+    metadata_store: Box<dyn MetadataOutgoingPort>,
 }
 
-impl KafkaBroker {
+impl BrokerService {
     pub fn new(
-        message_store: Box<dyn MessageStore>,
-        metadata_store: Box<dyn MetadataStore>,
+        message_store: Box<dyn MessageOutgoingPort>,
+        metadata_store: Box<dyn MetadataOutgoingPort>,
     ) -> Self {
         Self {
             message_store,
@@ -234,7 +234,7 @@ impl KafkaBroker {
 }
 
 #[async_trait]
-impl MessageHandler for KafkaBroker {
+impl BrokerIncomingPort for BrokerService {
     async fn handle_request(&self, request: KafkaRequest) -> Result<KafkaResponse> {
         if !request.header.is_supported_version() {
             return Ok(KafkaResponse::new(
@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MessageStore for MockMessageStore {
+    impl MessageOutgoingPort for MockMessageStore {
         async fn store_message(&self, _message: KafkaMessage) -> Result<u64> {
             Ok(self.next_offset.fetch_add(1, Ordering::SeqCst))
         }
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl MetadataStore for MockMetadataStore {
+    impl MetadataOutgoingPort for MockMetadataStore {
         async fn get_topic_metadata_by_names(
             &self,
             topic_names: Vec<String>,
@@ -366,7 +366,7 @@ mod tests {
             topic_authorized_operations: 0x0DF,
         };
 
-        let broker = KafkaBroker::new(
+        let broker = BrokerService::new(
             Box::new(MockMessageStore::new()),
             Box::new(MockMetadataStore::new(vec![topic_metadata])),
         );
@@ -407,7 +407,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_describe_topic_partitions_nonexistent_topic() -> Result<()> {
-        let broker = KafkaBroker::new(
+        let broker = BrokerService::new(
             Box::new(MockMessageStore::new()),
             Box::new(MockMetadataStore::new(vec![])),
         );

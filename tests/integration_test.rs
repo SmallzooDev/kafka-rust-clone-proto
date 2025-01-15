@@ -1,6 +1,6 @@
 use kafka_starter_rust::{
     adapters::outgoing::disk_store::DiskMessageStore, config::app_config::StoreConfig,
-    ports::outgoing::message_store::MessageStore, Result,
+    ports::outgoing::message_outgoing_port::MessageOutgoingPort, Result,
 };
 use std::time::Duration;
 use tempfile::TempDir;
