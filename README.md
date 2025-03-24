@@ -1,35 +1,8 @@
-[![progress-banner](https://backend.codecrafters.io/progress/kafka/415b130f-0a0d-49e2-bb33-74bab469babf)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+## 개요
+- 해당 프로젝트는 [codecrafters.io](https://codecrafters.io) 사이트의 kafka 클론 코딩 프로그램을 기반으로 작성되었습니다.
+- Codecrafters는 프로토콜을 기반으로 특정 프로그램을 구현할 수 있도록 단계를 나누어주고 코드베이스의 단계별 e2e 통합 테스트를 제공합니다. 
+- 해당 커리큘럼이 아직 완성되지 않아, 공식 문서를 기반으로 요구사항을 추가적으로 작성했습니다. 실제 메세지를 영속화하는 부분부터는 사이트와는 무관한 임의로 추가한 요구사항이며, 통합테스트 코드로 보완하려고 노력했습니다.
+- 관련한 고민은 개인 [위키](https://smallzoodev.netlify.app/_wiki/%EC%B9%B4%ED%94%84%EC%B9%B4%EB%A5%BC-%ED%97%A5%EC%82%AC%EA%B3%A0%EB%82%A0%ED%95%98%EA%B2%8C-%ED%81%B4%EB%A1%A0%EC%BD%94%EB%94%A9-%ED%95%B4%EB%B3%B4%EA%B8%B0/)에 정리되어 있습니다.
 
-This is a starting point for Rust solutions to the
-["Build Your Own Kafka" Challenge](https://codecrafters.io/challenges/kafka).
-
-In this challenge, you'll build a toy Kafka clone that's capable of accepting
-and responding to APIVersions & Fetch API requests. You'll also learn about
-encoding and decoding messages using the Kafka wire protocol. You'll also learn
-about handling the network protocol, event loops, TCP sockets and more.
-
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
-
-# Passing the first stage
-
-The entry point for your Kafka implementation is in `src/main.rs`. Study and
-uncomment the relevant code, and push your changes to pass the first stage:
-
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
-```
-
-That's all!
-
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `cargo (1.82)` installed locally
-1. Run `./your_program.sh` to run your Kafka broker, which is implemented in
-   `src/main.rs`. This command compiles your Rust project, so it might be slow
-   the first time you run it. Subsequent runs will be fast.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+  
+## 특이사항
